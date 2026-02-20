@@ -1,78 +1,56 @@
 # Claw-EE
 
-Claw-EE is an air-gapped enterprise sidecar for OpenClaw that adds:
+Claw-EE is a security and governance sidecar for OpenClaw.  
+It sits between OpenClaw and model/tool providers to enforce enterprise controls before actions execute.
 
-- tamper-evident audit logging (hash-chained SQLite records)
-- uncertainty gating for tool-intent requests
-- economic circuit breaker with hard hourly/daily USD caps
-- control plane endpoints for suspend/resume status
-- dynamic affective overrides to `SOUL.md`
+## Why Claw-EE Exists
 
-OpenClaw integration map: `docs/openclaw-alignment.md`
+OpenClaw can execute meaningful work. Enterprise deployment needs more:
 
-## 1. Configure environment
+- enforceable policy gates (not just prompt-level intent)
+- replay protection and abuse controls for inbound channels
+- auditable, tamper-evident decision history
+- bounded compute spend and fail-closed behavior options
+
+Claw-EE provides those controls without requiring OpenClaw core changes.
+
+## What You Get
+
+| Concern | Claw-EE control | Evidence surface |
+| --- | --- | --- |
+| Prompt injection / dangerous tool use | Policy engine + risk gate + approval workflow | `/_clawee/control/status`, audit ledger |
+| Replay / connector abuse | HMAC validation + nonce/event replay store (`sqlite`, `redis`, `postgres`) | `/_clawee/control/metrics`, replay store state |
+| Cost runaway / agentic drift | Economic circuit breaker (`HOURLY_USD_CAP`, `DAILY_USD_CAP`) | budget state in status/metrics |
+| Model/provider drift | Signed model registry and policy catalogs | catalog fingerprints in status/conformance |
+| Governance and accountability | Hash-chained audit + signed attestations + conformance exports | attestation/conformance endpoints |
+
+## How It Fits OpenClaw
+
+```text
+OpenClaw -> Claw-EE gateway -> policy/risk/approval/budget checks -> upstream model/tool endpoint
+```
+
+OpenClaw runtime mapping: `docs/openclaw-alignment.md`  
+API contract: `openapi/claw-ee.openapi.yaml`
+
+## Quickstart (10 minutes)
+
+1. Create env file.
 
 ```powershell
-cd C:\Users\scott\clawguard
 Copy-Item .env.example .env
 ```
 
-Required values:
+2. Set minimum required values in `.env`:
 
-- `UPSTREAM_BASE_URL` (where proxied requests are forwarded)
-- `INTERNAL_INFERENCE_BASE_URL` (internal risk-evaluator endpoint)
+- `UPSTREAM_BASE_URL`
+- `INTERNAL_INFERENCE_BASE_URL`
 - `INTERNAL_INFERENCE_API_KEY`
 - `CONTROL_API_TOKEN`
-- `MODEL_REGISTRY_SIGNING_KEY`
-- `POLICY_CATALOG_SIGNING_KEY`
-- `CAPABILITY_CATALOG_SIGNING_KEY`
 
-Optional:
+Note: catalog signing keys are required by config and have defaults in `.env.example`. Replace defaults for real deployments.
 
-- `CHANNEL_INGEST_TOKEN` (defaults to `CONTROL_API_TOKEN` if unset)
-- `CHANNEL_INGRESS_HMAC_SECRET` (enables HMAC validation for channel ingress)
-- `CHANNEL_INGRESS_MAX_SKEW_SECONDS` (max allowed timestamp skew for signed ingress requests)
-- `CHANNEL_INGRESS_EVENT_TTL_SECONDS` (event-id dedupe TTL for `x-channel-event-id` / body `event_id`)
-- `CHANNEL_INGRESS_MAX_TEXT_CHARS` (hard cap for inbound channel `text` length)
-- `CONTROL_RATE_LIMIT_WINDOW_SECONDS` / `CONTROL_RATE_LIMIT_MAX_REQUESTS`
-- `CHANNEL_INGRESS_RATE_LIMIT_WINDOW_SECONDS` / `CHANNEL_INGRESS_RATE_LIMIT_MAX_REQUESTS`
-- `REPLAY_STORE_MODE` (`sqlite` default; `redis` or `postgres` for cluster-shared replay defense)
-- `REPLAY_REDIS_URL` / `REPLAY_REDIS_PREFIX` (required when `REPLAY_STORE_MODE=redis`)
-- `REPLAY_POSTGRES_URL` / `REPLAY_POSTGRES_SCHEMA` / `REPLAY_POSTGRES_TABLE_PREFIX` (required when `REPLAY_STORE_MODE=postgres`)
-- `REPLAY_POSTGRES_CONNECT_TIMEOUT_MS` / `REPLAY_POSTGRES_SSL_MODE` (`disable|require|verify-full`)
-- `CLAWEE_NODE_ID` / `CLAWEE_CLUSTER_ID` (cluster metadata emitted in status/metrics/conformance evidence)
-- `AUDIT_STARTUP_VERIFY_MODE` (`block` default; `warn` or `off` for relaxed startup integrity handling)
-- `SECURITY_INVARIANTS_ENFORCEMENT` (`block` default; fail-closed invariant coverage enforcement)
-- `MODALITY_TEXT_MAX_PAYLOAD_BYTES` / `MODALITY_VISION_MAX_PAYLOAD_BYTES`
-- `MODALITY_AUDIO_MAX_PAYLOAD_BYTES` / `MODALITY_ACTION_MAX_PAYLOAD_BYTES`
-- `MODALITY_TEXT_MAX_CHARS` (schema cap for text modality payloads)
-- `MAX_REQUEST_INPUT_TOKENS` / `MAX_REQUEST_OUTPUT_TOKENS` (hard per-request token ceilings)
-- `RISK_EVALUATOR_FAIL_MODE` (`block` recommended for fail-closed behavior)
-- `CONTROL_TOKENS_PATH` (optional RBAC token catalog; legacy `CONTROL_API_TOKEN` remains superadmin)
-- `CONTROL_TOKENS_SIGNING_KEY` (optional; enforces signed RBAC token catalog integrity)
-- `CONTROL_TOKENS_SIGNING_KEYRING_PATH` (optional keyring for signing-key rotation, supports `signature_v2`)
-- `CAPABILITY_CATALOG_PATH` / `CAPABILITY_CATALOG_SIGNING_KEY`
-- `CAPABILITY_CATALOG_SIGNING_KEYRING_PATH` (optional keyring for capability-catalog signing rotation)
-- `CHANNEL_CONNECTOR_SIGNING_KEY` (optional HMAC key to require signed connector catalogs)
-- `CHANNEL_DESTINATION_POLICY_PATH` / `CHANNEL_DESTINATION_POLICY_SIGNING_KEY`
-- `CHANNEL_MAX_OUTBOUND_CHARS` (hard cap for outbound channel message size)
-- `APPROVAL_ATTESTATION_DEFAULT_PATH` / `APPROVAL_ATTESTATION_SIGNING_KEY`
-- `APPROVAL_ATTESTATION_SIGNING_KEYRING_PATH` (optional keyring for attestation signing rotation)
-- `AUDIT_ATTESTATION_DEFAULT_PATH` / `AUDIT_ATTESTATION_SIGNING_KEY`
-- `AUDIT_ATTESTATION_SIGNING_KEYRING_PATH` (optional keyring for audit-attestation signing rotation)
-- `SECURITY_CONFORMANCE_EXPORT_PATH` / `SECURITY_CONFORMANCE_SIGNING_KEY`
-- `SECURITY_CONFORMANCE_SIGNING_KEYRING_PATH` (optional keyring for conformance signing rotation)
-- `APPROVAL_ATTESTATION_PERIODIC_ENABLED`
-- `APPROVAL_ATTESTATION_PERIODIC_INTERVAL_SECONDS`
-- `APPROVAL_ATTESTATION_SNAPSHOT_DIRECTORY` / `APPROVAL_ATTESTATION_CHAIN_PATH`
-- `APPROVAL_ATTESTATION_MAX_RECORDS_PER_EXPORT` / `APPROVAL_ATTESTATION_INCREMENTAL`
-- `APPROVAL_ATTESTATION_RETENTION_MAX_FILES`
-- `APPROVAL_REQUIRED_COUNT` (default `2`; number of distinct approvers required for high-risk actions)
-- `APPROVAL_MAX_USES` (default `1`; replay-resistant approval token use limit)
-- `APPROVAL_POLICY_CATALOG_PATH` / `APPROVAL_POLICY_CATALOG_SIGNING_KEY`
-- `APPROVAL_POLICY_CATALOG_SIGNING_KEYRING_PATH` (optional keyring for approval-policy signing rotation)
-
-## 2. Install and run
+3. Install and run.
 
 ```powershell
 npm install
@@ -80,188 +58,143 @@ npm run build
 npm run start
 ```
 
-If PowerShell blocks `npm.ps1`, use:
+4. Run smoke checks.
 
 ```powershell
-npm.cmd install
-npm.cmd run build
-npm.cmd run start
+npm run smoke:security
+npm run repo:check
 ```
 
-Security smoke checks:
+Windows fallback if `npm.ps1` is blocked:
 
 ```powershell
 npm.cmd run smoke:security
-npm.cmd run smoke:security:strict
-npm.cmd run repo:check
-npm.cmd run security:invariants
-npm.cmd run release:notes -- v0.1.0
 ```
 
-Containerized run:
+## Strict Replay Verification
 
-```powershell
-docker compose up --build -d
-docker compose logs -f claw-ee
-```
+Claw-EE supports strict replay smoke mode for CI/release:
 
-If using Redis or Postgres replay mode:
+- `REPLAY_SMOKE_STRICT=true` causes replay smoke tests to fail if backend URLs are missing.
+- `smoke:security:strict` enables this mode.
 
-```powershell
-npm.cmd install redis pg
-```
+CI workflows (`.github/workflows/security-smoke.yml`, `.github/workflows/release.yml`) run strict smoke checks with Redis and Postgres service containers.
 
-Security tooling:
+## Deployment Modes
+
+1. Local evaluation
+- Single-node replay store (`REPLAY_STORE_MODE=sqlite`)
+- Fastest setup, not cross-node dedupe
+
+2. Multi-node enterprise
+- Shared replay store (`REPLAY_STORE_MODE=redis` or `postgres`)
+- Use `CLAWEE_NODE_ID` and `CLAWEE_CLUSTER_ID` for cluster telemetry
+
+3. Air-gapped / controlled egress
+- `OUTBOUND_INTERNET_POLICY=deny`
+- allowlist only required hosts via `ALLOWED_OUTBOUND_HOSTS`
+- optional TLS pinning and mTLS for upstream/inference transport
+
+## Control API Overview
+
+Auth: `Authorization: Bearer <token>` or `x-control-token`.
+
+Core groups:
+
+- System: `/_clawee/control/status`, `/_clawee/control/metrics`, suspend/resume
+- Policy/catalog reload: model, policy, approval-policy, capability-policy, control-tokens, destination-policy
+- Approvals: pending list, approve/deny, attestation export/verify
+- Audit/security: recent audit, audit verify, attestation export/verify, conformance export/verify, invariants
+- Channel operations: inbound/outbound visibility, send, delivery, retry, connector reload
+- Modality ingest: validated `text|vision|audio|action` payload intake
+
+Full endpoint details: `openapi/claw-ee.openapi.yaml`
+
+## Configuration Reference
+
+Use `.env.example` as the full source of truth. High-impact groups:
+
+### Routing and execution
+
+- `UPSTREAM_BASE_URL`
+- `INTERNAL_INFERENCE_BASE_URL`
+- `INTERNAL_INFERENCE_API_KEY`
+- `ENFORCEMENT_MODE`
+- `RISK_EVALUATOR_FAIL_MODE`
+
+### Replay and cluster identity
+
+- `REPLAY_STORE_MODE` (`sqlite|redis|postgres`)
+- `REPLAY_REDIS_URL`, `REPLAY_REDIS_PREFIX`
+- `REPLAY_POSTGRES_URL`, `REPLAY_POSTGRES_SCHEMA`, `REPLAY_POSTGRES_TABLE_PREFIX`
+- `REPLAY_POSTGRES_CONNECT_TIMEOUT_MS`, `REPLAY_POSTGRES_SSL_MODE`
+- `CLAWEE_NODE_ID`, `CLAWEE_CLUSTER_ID`
+
+### Budget and guardrails
+
+- `HOURLY_USD_CAP`, `DAILY_USD_CAP`
+- `MAX_REQUEST_INPUT_TOKENS`, `MAX_REQUEST_OUTPUT_TOKENS`
+- `CHANNEL_MAX_OUTBOUND_CHARS`
+- `CHANNEL_INGRESS_MAX_TEXT_CHARS`
+
+### Governance and approvals
+
+- `APPROVAL_REQUIRED_COUNT`, `APPROVAL_MAX_USES`, `APPROVAL_TTL_SECONDS`
+- `APPROVAL_POLICY_CATALOG_PATH`
+- `APPROVAL_ATTESTATION_*`, `AUDIT_ATTESTATION_*`
+- `SECURITY_CONFORMANCE_*`
+
+### Signed policy surfaces
+
+- `POLICY_CATALOG_*`
+- `MODEL_REGISTRY_*`
+- `CAPABILITY_CATALOG_*`
+- `CONTROL_TOKENS_*`
+- `CHANNEL_DESTINATION_POLICY_*`
+- `CHANNEL_CONNECTOR_SIGNING_KEY`
+
+## Operational Behavior (Key Defaults)
+
+- `ENFORCEMENT_MODE=block` blocks low-confidence risky actions.
+- `RISK_EVALUATOR_FAIL_MODE=block` fails closed on evaluator outage.
+- `AUDIT_STARTUP_VERIFY_MODE=block` blocks startup on broken audit chain.
+- `SECURITY_INVARIANTS_ENFORCEMENT=block` blocks on invariant bypass risk.
+- Oversized modality/channel payloads return `413`.
+- Replay collisions return `409`.
+- Approval-required actions return `428` until quorum is satisfied.
+- Rate-limited routes return `429` with `retry-after`.
+
+## Security Tooling
+
+Useful commands:
 
 ```powershell
 node scripts/security-tools.mjs hash-token "my-secret-token"
-node scripts/security-tools.mjs sign-control-catalog .\config\control-tokens.v1.example.json "signing-key"
-node scripts/security-tools.mjs sign-control-catalog-keyring .\config\control-tokens.v1.example.json .\config\control-tokens-signing-keyring.v1.example.json
-node scripts/security-tools.mjs sign-connector-catalog .\config\channel-connectors.v1.json "signing-key"
-node scripts/security-tools.mjs sign-destination-policy .\config\channel-destination-policy.v1.json "signing-key"
-node scripts/security-tools.mjs sign-capability-catalog .\config\capability-catalog.v1.json "signing-key"
-node scripts/security-tools.mjs sign-capability-catalog-keyring .\config\capability-catalog.v1.json .\config\capability-catalog-signing-keyring.v1.example.json
-node scripts/security-tools.mjs sign-approval-policy-catalog .\config\approval-policy-catalog.v1.json "signing-key"
-node scripts/security-tools.mjs sign-approval-policy-catalog-keyring .\config\approval-policy-catalog.v1.json .\config\approval-policy-catalog-signing-keyring.v1.example.json
-node scripts/security-tools.mjs verify-attestation-snapshot .\approval_attestation.json "signing-key"
-node scripts/security-tools.mjs verify-attestation-chain .\approval_attestation_chain.jsonl "signing-key"
-node scripts/security-tools.mjs verify-attestation-snapshot-keyring .\approval_attestation.json .\config\approval-attestation-signing-keyring.v1.example.json
-node scripts/security-tools.mjs verify-attestation-chain-keyring .\approval_attestation_chain.jsonl .\config\approval-attestation-signing-keyring.v1.example.json
 node scripts/security-tools.mjs verify-audit-chain "$env:USERPROFILE\\.openclaw\\enterprise_audit.db"
+node scripts/security-tools.mjs sign-control-catalog .\config\control-tokens.v1.example.json "signing-key"
+node scripts/security-tools.mjs sign-capability-catalog .\config\capability-catalog.v1.json "signing-key"
+node scripts/security-tools.mjs sign-approval-policy-catalog .\config\approval-policy-catalog.v1.json "signing-key"
 ```
 
-A GitHub Actions workflow (`.github/workflows/security-smoke.yml`) runs strict replay-backed checks on push/PR using Redis and Postgres service containers.
+## Repository Scripts
 
-## 3. Wire OpenClaw
+- `npm run build`
+- `npm run dev`
+- `npm run start`
+- `npm run smoke:security`
+- `npm run smoke:security:strict`
+- `npm run repo:check`
+- `npm run security:invariants`
+- `npm run release:notes -- <tag>`
 
-Point OpenClaw base URL to:
+## Who This Is For
 
-```text
-http://localhost:8080
-```
+- Platform, security, and infra teams evaluating autonomous agent deployment risk
+- Teams using OpenClaw that need enforceable controls and auditable operations
 
-OpenAPI spec:
+## Not A Goal
 
-- `openapi/claw-ee.openapi.yaml`
+- Replacing OpenClaw runtime behavior or agent UX
+- Claiming formal theorem-proved end-to-end correctness
 
-## 4. Control API
-
-Control endpoints are protected by bearer token (`Authorization: Bearer <token>`) or `x-control-token`.
-By default, `CONTROL_API_TOKEN` has full access. If `CONTROL_TOKENS_PATH` is configured, scoped tokens are also accepted.
-
-- `GET /_clawee/control/status`
-- `POST /_clawee/control/suspend`
-- `POST /_clawee/control/resume`
-- `GET /_clawee/control/approvals/pending`
-- `POST /_clawee/control/approvals/:id/approve`
-- `POST /_clawee/control/approvals/:id/deny`
-- `GET /_clawee/control/audit/recent?limit=100`
-- `GET /_clawee/control/audit/verify`
-- `GET /_clawee/control/audit/attestation?limit=1000&since=<iso8601>`
-- `POST /_clawee/control/audit/attestation/export`
-- `POST /_clawee/control/audit/attestation/verify`
-- `GET /_clawee/control/security/invariants`
-- `POST /_clawee/control/security/conformance/export`
-- `POST /_clawee/control/security/conformance/verify`
-- `POST /_clawee/control/modality/ingest`
-- `GET /_clawee/control/modality/recent?limit=100`
-- `GET /_clawee/control/channel/inbound?limit=100`
-- `GET /_clawee/control/channel/outbound?limit=100`
-- `GET /_clawee/control/channel/delivery?limit=100`
-- `POST /_clawee/control/channel/send`
-- `POST /_clawee/control/channel/delivery/:id/retry`
-- `POST /_clawee/control/channel/reload-connectors`
-- `GET /_clawee/control/metrics`
-- `POST /_clawee/control/reload/policies`
-- `POST /_clawee/control/reload/approval-policy`
-- `POST /_clawee/control/reload/capability-policy`
-- `POST /_clawee/control/reload/model-registry`
-- `POST /_clawee/control/reload/control-tokens`
-- `POST /_clawee/control/reload/channel-destination-policy`
-- `GET /_clawee/control/approvals/attestation?limit=1000&since=<iso8601>`
-- `POST /_clawee/control/approvals/attestation/export`
-- `POST /_clawee/control/approvals/attestation/verify`
-- `POST /_clawee/control/reload/approval-attestation-signing`
-- `POST /_clawee/control/reload/audit-attestation-signing`
-- `POST /_clawee/control/reload/security-conformance-signing`
-
-Channel ingress endpoint (for corporate connectors):
-
-- `POST /_clawee/channel/:channel/inbound` (`:channel` = `slack|teams|discord|email|webhook`)
-- If `CHANNEL_INGRESS_HMAC_SECRET` is set, include:
-  - `x-channel-timestamp: <unix-seconds-or-ms>` (required)
-  - `x-channel-signature: sha256=<hmac(secret, timestamp + "." + raw_body)>`
-
-## Behavior Notes
-
-- `ENFORCEMENT_MODE=block` blocks low-confidence risky tool actions.
-- `RISK_EVALUATOR_FAIL_MODE=block` fails closed if the secondary risk evaluator is unavailable.
-- `AUDIT_STARTUP_VERIFY_MODE=block` fails startup if audit hash-chain integrity is broken.
-- `SECURITY_INVARIANTS_ENFORCEMENT=block` fails closed when invariant coverage checks detect bypass risk.
-- Modality ingest enforces strict per-modality schemas (`text|vision|audio|action`).
-- Modality and channel-ingress payload size limits return `413` when exceeded.
-- Budget caps are enforced via `HOURLY_USD_CAP` and `DAILY_USD_CAP`.
-- Per-request token ceilings are enforced before forwarding and return `413` when exceeded.
-- Budget breach auto-suspends inference forwarding until manual resume.
-- `OUTBOUND_INTERNET_POLICY=deny` enforces air-gap startup checks for configured outbound endpoints.
-- `ALLOWED_OUTBOUND_HOSTS` can explicitly allow non-private hosts (comma-separated) when required.
-- Startup writes air-gap attestation to `AIRGAP_ATTESTATION_PATH` (default: `~/.openclaw/airgap_attestation.json`).
-- `RUNTIME_EGRESS_REVALIDATION_MS` controls DNS/IP re-validation cadence for upstream and internal inference endpoints during runtime.
-- Channel outbound delivery webhooks are also checked against runtime egress policy before each send.
-- Model execution is gated by signed entries in `MODEL_REGISTRY_PATH`.
-- Requests using unapproved model/modality combinations are blocked with 403.
-- High-risk actions are policy-gated and can return `428 Approval Required`.
-- High-risk outbound channel messages are also policy-gated and require approval before queueing.
-- Outbound channel messages over `CHANNEL_MAX_OUTBOUND_CHARS` are blocked with `413`.
-- Approval quorum is configurable via `APPROVAL_REQUIRED_COUNT`; approvals require distinct actors.
-- Approval tokens are single-use by default (`APPROVAL_MAX_USES=1`) and are consumed on execution.
-- Approval policy can enforce stricter quorum/roles by risk class, tool, and channel action.
-- `POST /_clawee/control/approvals/:id/approve` returns `202` when partially approved and `200` when quorum is reached.
-- Capability policy can hard-deny specific tool executions and channel actions before policy/risk evaluation.
-- Approval/deny actions bind to authenticated control principal (request body actor is ignored).
-- Self-approval is blocked when requester identity is known (separation-of-duties).
-- Channel ingress signatures are replay-protected; duplicate signed payloads within skew window are rejected with `409`.
-- Channel ingress event IDs are replay-protected; duplicate `x-channel-event-id` / `event_id` values are rejected with `409`.
-- For multi-node deployments, use `REPLAY_STORE_MODE=redis` or `REPLAY_STORE_MODE=postgres` so replay dedupe is shared across nodes.
-- Redis/Postgres replay mode is validated at startup and fails fast on bad config/connectivity.
-- `REPLAY_SMOKE_STRICT=true` forces replay smoke tests to fail when replay backend URLs are missing (used by CI/release workflows).
-- Status/metrics include `node_id`, `cluster_id`, and signed config fingerprints for cross-node drift detection.
-- Control and channel ingress endpoints are rate-limited and return `429` with `retry-after`.
-- Status/metrics include active control-authz catalog state and connector catalog fingerprint/signing state.
-- Status/metrics include attestation signing mode and active key id when keyring signing is used.
-- Submit `x-clawee-approval-id: <approved_id>` on retry after manual approval.
-- Optional alert webhook can receive critical events (`ALERT_WEBHOOK_URL`).
-- Policy rules are loaded from signed catalog (`POLICY_CATALOG_PATH`).
-- Approval rules can be loaded from signed catalog (`APPROVAL_POLICY_CATALOG_PATH`).
-- Capability rules are loaded from signed catalog (`CAPABILITY_CATALOG_PATH`).
-- Optional transport hardening supports TLS pinning and mTLS for upstream/inference endpoints.
-- Heartbeat scheduler runs continuously and logs due tasks from `HEARTBEAT_TASKS_PATH`.
-- Outbound channel connector definitions are loaded from `CHANNEL_CONNECTOR_CONFIG_PATH`.
-- Connector entries may include `hmac_secret` to sign outbound webhook payloads with `x-clawee-signature`.
-- If `CHANNEL_CONNECTOR_SIGNING_KEY` is set, connector catalog must include valid `signature` and tampered catalogs are rejected.
-- Outbound destinations are enforced by channel destination policy from `CHANNEL_DESTINATION_POLICY_PATH`.
-- Destination policy can run default-allow or default-deny modes per channel with allow/deny regex patterns.
-- Example RBAC token catalog: `config/control-tokens.v1.example.json`
-- If `CONTROL_TOKENS_SIGNING_KEY` is set, token catalog must include valid `signature`.
-- For key rotation, use `CONTROL_TOKENS_SIGNING_KEYRING_PATH` and `signature_v2 { kid, sig }`.
-- Example control-token keyring: `config/control-tokens-signing-keyring.v1.example.json`
-- Example capability-catalog keyring: `config/capability-catalog-signing-keyring.v1.example.json`
-- Example approval-policy keyring: `config/approval-policy-catalog-signing-keyring.v1.example.json`
-- Approval attestation exports produce hash-chained records and optional HMAC signature.
-- Audit attestation exports produce hash-chained records and optional HMAC signature.
-- Security conformance exports produce signed, sealed snapshot + chain evidence bundles.
-- Example attestation keyring: `config/approval-attestation-signing-keyring.v1.example.json`
-- `POST /_clawee/control/approvals/attestation/export` writes sealed snapshot + append-only chain (`snapshot_path`/`chain_path` optional in body).
-- Optional periodic attestation job can auto-export sealed snapshots on interval.
-- `APPROVAL_ATTESTATION_RETENTION_MAX_FILES>0` prunes old snapshot files while preserving append-only chain.
-- Audit ledger path: `~/.openclaw/enterprise_audit.db`
-- Budget ledger path: `~/.openclaw/enterprise_budget.db`
-- Approval DB path: `~/.openclaw/enterprise_approvals.db`
-- Interaction DB path: `~/.openclaw/enterprise_interactions.db`
-
-## Smoke Test
-
-1. Start Claw-EE.
-2. Send a model request through `http://localhost:8080`.
-3. Check control status endpoint for hourly/daily budget counters.
-4. Lower `HOURLY_USD_CAP` temporarily and confirm auto-suspend behavior.
+Current roadmap/non-goals: `docs/openclaw-alignment.md`

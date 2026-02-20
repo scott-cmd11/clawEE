@@ -37,6 +37,7 @@ Optional:
 - `CHANNEL_INGRESS_RATE_LIMIT_WINDOW_SECONDS` / `CHANNEL_INGRESS_RATE_LIMIT_MAX_REQUESTS`
 - `REPLAY_STORE_MODE` (`sqlite` default, `redis` for cluster-shared replay defense)
 - `REPLAY_REDIS_URL` / `REPLAY_REDIS_PREFIX` (required when `REPLAY_STORE_MODE=redis`)
+- `AUDIT_STARTUP_VERIFY_MODE` (`block` default; `warn` or `off` for relaxed startup integrity handling)
 - `MAX_REQUEST_INPUT_TOKENS` / `MAX_REQUEST_OUTPUT_TOKENS` (hard per-request token ceilings)
 - `RISK_EVALUATOR_FAIL_MODE` (`block` recommended for fail-closed behavior)
 - `CONTROL_TOKENS_PATH` (optional RBAC token catalog; legacy `CONTROL_API_TOKEN` remains superadmin)
@@ -112,6 +113,7 @@ node scripts/security-tools.mjs verify-attestation-snapshot .\approval_attestati
 node scripts/security-tools.mjs verify-attestation-chain .\approval_attestation_chain.jsonl "signing-key"
 node scripts/security-tools.mjs verify-attestation-snapshot-keyring .\approval_attestation.json .\config\approval-attestation-signing-keyring.v1.example.json
 node scripts/security-tools.mjs verify-attestation-chain-keyring .\approval_attestation_chain.jsonl .\config\approval-attestation-signing-keyring.v1.example.json
+node scripts/security-tools.mjs verify-audit-chain "$env:USERPROFILE\\.openclaw\\enterprise_audit.db"
 ```
 
 A GitHub Actions workflow (`.github/workflows/security-smoke.yml`) runs the same checks on push/PR.
@@ -140,6 +142,7 @@ By default, `CONTROL_API_TOKEN` has full access. If `CONTROL_TOKENS_PATH` is con
 - `POST /_clawee/control/approvals/:id/approve`
 - `POST /_clawee/control/approvals/:id/deny`
 - `GET /_clawee/control/audit/recent?limit=100`
+- `GET /_clawee/control/audit/verify`
 - `POST /_clawee/control/modality/ingest`
 - `GET /_clawee/control/modality/recent?limit=100`
 - `GET /_clawee/control/channel/inbound?limit=100`
@@ -171,6 +174,7 @@ Channel ingress endpoint (for corporate connectors):
 
 - `ENFORCEMENT_MODE=block` blocks low-confidence risky tool actions.
 - `RISK_EVALUATOR_FAIL_MODE=block` fails closed if the secondary risk evaluator is unavailable.
+- `AUDIT_STARTUP_VERIFY_MODE=block` fails startup if audit hash-chain integrity is broken.
 - Budget caps are enforced via `HOURLY_USD_CAP` and `DAILY_USD_CAP`.
 - Per-request token ceilings are enforced before forwarding and return `413` when exceeded.
 - Budget breach auto-suspends inference forwarding until manual resume.

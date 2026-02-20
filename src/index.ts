@@ -55,6 +55,23 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const ledger = new SqliteAuditLedger(path.join(config.openclawHome, "enterprise_audit.db"));
   ledger.init();
+  const startupAuditIntegrity = ledger.verifyIntegrity();
+  if (!startupAuditIntegrity.valid) {
+    const message = `Audit ledger integrity check failed at startup: ${startupAuditIntegrity.reason || "unknown"}`;
+    if (config.auditStartupVerifyMode === "block") {
+      ledger.close();
+      throw new Error(message);
+    }
+    if (config.auditStartupVerifyMode === "warn") {
+      // eslint-disable-next-line no-console
+      console.warn(message, startupAuditIntegrity);
+    }
+  } else if (config.auditStartupVerifyMode !== "off") {
+    ledger.logAndSignAction("AUDIT_CHAIN_VERIFIED", {
+      stage: "startup",
+      report: startupAuditIntegrity,
+    });
+  }
 
   try {
     const attestation = enforceAndAttestAirgapPolicy({
@@ -315,6 +332,7 @@ async function main(): Promise<void> {
       warnThreshold: config.warnThreshold,
       evaluatorModel: config.evaluatorModel,
       riskEvaluatorFailMode: config.riskEvaluatorFailMode,
+      auditStartupVerifyMode: config.auditStartupVerifyMode,
       modelRegistryFingerprint: modelRegistry.getFingerprint(),
       enforcementMode: config.enforcementMode,
       controlAuthz,

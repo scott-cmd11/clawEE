@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 const GENESIS_HASH = "0".repeat(64);
 
 function loadKeyring(pathValue) {
@@ -531,6 +532,83 @@ function verifyAttestationChain(chainPath, signingKey, keyringPath) {
   };
 }
 
+function auditHash(timestamp, actionType, payload, previousHash) {
+  return crypto
+    .createHash("sha256")
+    .update(`${timestamp}|${actionType}|${payload}|${previousHash}`)
+    .digest("hex");
+}
+
+function verifyAuditChain(auditDbPath) {
+  if (!fs.existsSync(auditDbPath)) {
+    return {
+      valid: false,
+      reason: "audit db file missing",
+      total_rows: 0,
+      checked_rows: 0,
+      first_invalid_id: null,
+      chain_tip: GENESIS_HASH,
+    };
+  }
+  const db = new Database(auditDbPath, { readonly: true });
+  try {
+    const rows = db
+      .prepare(
+        `
+          SELECT id, timestamp, action_type, payload, previous_hash, current_hash
+          FROM audit_logs
+          ORDER BY id ASC
+        `,
+      )
+      .all();
+    let previous = GENESIS_HASH;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (row.previous_hash !== previous) {
+        return {
+          valid: false,
+          reason: "previous_hash mismatch",
+          total_rows: rows.length,
+          checked_rows: i,
+          first_invalid_id: row.id,
+          expected_hash: previous,
+          actual_hash: row.previous_hash,
+          chain_tip: previous,
+        };
+      }
+      const expectedCurrent = auditHash(
+        String(row.timestamp),
+        String(row.action_type),
+        String(row.payload),
+        previous,
+      );
+      if (row.current_hash !== expectedCurrent) {
+        return {
+          valid: false,
+          reason: "current_hash mismatch",
+          total_rows: rows.length,
+          checked_rows: i,
+          first_invalid_id: row.id,
+          expected_hash: expectedCurrent,
+          actual_hash: row.current_hash,
+          chain_tip: previous,
+        };
+      }
+      previous = row.current_hash;
+    }
+    return {
+      valid: true,
+      reason: null,
+      total_rows: rows.length,
+      checked_rows: rows.length,
+      first_invalid_id: null,
+      chain_tip: previous,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 function usage() {
   // eslint-disable-next-line no-console
   console.log(
@@ -549,6 +627,7 @@ function usage() {
       "  node scripts/security-tools.mjs verify-attestation-chain <chainPath> [signingKey]",
       "  node scripts/security-tools.mjs verify-attestation-snapshot-keyring <snapshotPath> <keyringPath>",
       "  node scripts/security-tools.mjs verify-attestation-chain-keyring <chainPath> <keyringPath>",
+      "  node scripts/security-tools.mjs verify-audit-chain <auditDbPath>",
     ].join("\n"),
   );
 }
@@ -725,6 +804,18 @@ function main() {
       }
       const [chainPath, keyringPath] = args;
       const result = verifyAttestationChain(path.resolve(chainPath), "", path.resolve(keyringPath));
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(result.valid ? 0 : 2);
+      break;
+    }
+    case "verify-audit-chain": {
+      if (args.length < 1) {
+        usage();
+        process.exit(1);
+      }
+      const [auditDbPath] = args;
+      const result = verifyAuditChain(path.resolve(auditDbPath));
       // eslint-disable-next-line no-console
       console.log(JSON.stringify(result, null, 2));
       process.exit(result.valid ? 0 : 2);

@@ -343,6 +343,7 @@ async function main() {
         warnThreshold: 0.85,
         evaluatorModel: "gpt-4.1-mini",
         riskEvaluatorFailMode: "block",
+        auditStartupVerifyMode: "block",
         modelRegistryFingerprint: modelRegistry.getFingerprint(),
         enforcementMode: "block",
         controlAuthz,
@@ -799,6 +800,20 @@ async function main() {
     assert.equal(verifyRes.status, 200);
     const verifyJson = await verifyRes.json();
     assert.equal(verifyJson.ok, true);
+
+    const auditVerifyRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/audit/verify`,
+      {
+        headers: {
+          authorization: `Bearer ${controlToken}`,
+        },
+      },
+    );
+    assert.equal(auditVerifyRes.status, 200);
+    const auditVerifyJson = await auditVerifyRes.json();
+    assert.equal(auditVerifyJson.ok, true);
+    assert.equal(auditVerifyJson.report.valid, true);
+    assert.ok(Number(auditVerifyJson.report.checked_rows) > 0);
 
     const signingReloadDenied = await fetch(
       `http://127.0.0.1:${gatePort}/_clawee/control/reload/approval-attestation-signing`,

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added startup audit hash-chain verification with configurable fail mode (`AUDIT_STARTUP_VERIFY_MODE`).
+- Added `GET /_clawee/control/audit/verify` for runtime audit-integrity checks.
+- Added `verify-audit-chain` command in `scripts/security-tools.mjs` for offline/CI validation.
+
 ## 0.1.0
 
 - Air-gapped sidecar proxy with runtime egress enforcement.

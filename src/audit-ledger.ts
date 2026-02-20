@@ -63,6 +63,7 @@ export type AuditActionType =
   | "AIRGAP_POLICY_VIOLATION"
   | "MODEL_REGISTRY_LOADED"
   | "REPLAY_STORE_READY"
+  | "AUDIT_CHAIN_VERIFIED"
   | "MODEL_POLICY_BLOCKED"
   | "RUNTIME_EGRESS_BLOCKED"
   | "AFFECTIVE_OVERRIDE_SET"
@@ -78,11 +79,23 @@ export interface AuditRow {
   current_hash: string;
 }
 
+export interface AuditIntegrityReport {
+  valid: boolean;
+  total_rows: number;
+  checked_rows: number;
+  first_invalid_id: number | null;
+  reason: string | null;
+  expected_hash: string | null;
+  actual_hash: string | null;
+  chain_tip: string;
+}
+
 export interface AuditLedger {
   init(): void;
   logAndSignAction(actionType: AuditActionType, payload: unknown): AuditRow;
   getRecent(limit?: number): AuditRow[];
   getCount(): number;
+  verifyIntegrity(): AuditIntegrityReport;
   close(): void;
 }
 
@@ -116,15 +129,13 @@ export class SqliteAuditLedger implements AuditLedger {
     const db = this.assertDb();
     const timestamp = new Date().toISOString();
     const serializedPayload = stableStringify(redactSensitive(payload));
-    const previousHash =
-      (db.prepare("SELECT current_hash FROM audit_logs ORDER BY id DESC LIMIT 1").get() as
-        | { current_hash: string }
-        | undefined)?.current_hash ?? GENESIS_HASH;
-
-    const currentHash = crypto
-      .createHash("sha256")
-      .update(`${timestamp}|${actionType}|${serializedPayload}|${previousHash}`)
-      .digest("hex");
+    const previousHash = this.latestHash(db);
+    const currentHash = this.computeCurrentHash(
+      timestamp,
+      actionType,
+      serializedPayload,
+      previousHash,
+    );
 
     const result = db
       .prepare(
@@ -176,6 +187,66 @@ export class SqliteAuditLedger implements AuditLedger {
     return Number(row.count || 0);
   }
 
+  verifyIntegrity(): AuditIntegrityReport {
+    const db = this.assertDb();
+    const rows = db
+      .prepare(
+        `
+          SELECT id, timestamp, action_type, payload, previous_hash, current_hash
+          FROM audit_logs
+          ORDER BY id ASC
+        `,
+      )
+      .all() as AuditRow[];
+
+    let expectedPreviousHash = GENESIS_HASH;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (row.previous_hash !== expectedPreviousHash) {
+        return {
+          valid: false,
+          total_rows: rows.length,
+          checked_rows: i,
+          first_invalid_id: row.id,
+          reason: "previous_hash mismatch",
+          expected_hash: expectedPreviousHash,
+          actual_hash: row.previous_hash,
+          chain_tip: expectedPreviousHash,
+        };
+      }
+      const expectedCurrentHash = this.computeCurrentHash(
+        row.timestamp,
+        row.action_type,
+        row.payload,
+        expectedPreviousHash,
+      );
+      if (row.current_hash !== expectedCurrentHash) {
+        return {
+          valid: false,
+          total_rows: rows.length,
+          checked_rows: i,
+          first_invalid_id: row.id,
+          reason: "current_hash mismatch",
+          expected_hash: expectedCurrentHash,
+          actual_hash: row.current_hash,
+          chain_tip: expectedPreviousHash,
+        };
+      }
+      expectedPreviousHash = row.current_hash;
+    }
+
+    return {
+      valid: true,
+      total_rows: rows.length,
+      checked_rows: rows.length,
+      first_invalid_id: null,
+      reason: null,
+      expected_hash: null,
+      actual_hash: null,
+      chain_tip: expectedPreviousHash,
+    };
+  }
+
   close(): void {
     if (this.db) {
       this.db.close();
@@ -188,5 +259,25 @@ export class SqliteAuditLedger implements AuditLedger {
       throw new Error("Audit ledger is not initialized.");
     }
     return this.db;
+  }
+
+  private latestHash(db: Database.Database): string {
+    return (
+      (db.prepare("SELECT current_hash FROM audit_logs ORDER BY id DESC LIMIT 1").get() as
+        | { current_hash: string }
+        | undefined)?.current_hash ?? GENESIS_HASH
+    );
+  }
+
+  private computeCurrentHash(
+    timestamp: string,
+    actionType: string,
+    serializedPayload: string,
+    previousHash: string,
+  ): string {
+    return crypto
+      .createHash("sha256")
+      .update(`${timestamp}|${actionType}|${serializedPayload}|${previousHash}`)
+      .digest("hex");
   }
 }

@@ -103,6 +103,45 @@ paths:
                     type: boolean
                   approval:
                     $ref: "#/components/schemas/ApprovalRecord"
+  /_clawee/control/audit/recent:
+    get:
+      summary: List recent audit ledger events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Recent audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+  /_clawee/control/audit/verify:
+    get:
+      summary: Verify hash-chain integrity of audit ledger
+      responses:
+        "200":
+          description: Audit ledger integrity verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerifyResponse"
+        "409":
+          description: Audit ledger integrity failure detected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerifyResponse"
   /_clawee/control/approvals/attestation:
     get:
       summary: Generate approval attestation payload
@@ -462,6 +501,34 @@ components:
         signature:
           type: string
           nullable: true
+    AuditVerifyResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        report:
+          type: object
+          properties:
+            valid:
+              type: boolean
+            total_rows:
+              type: integer
+            checked_rows:
+              type: integer
+            first_invalid_id:
+              type: integer
+              nullable: true
+            reason:
+              type: string
+              nullable: true
+            expected_hash:
+              type: string
+              nullable: true
+            actual_hash:
+              type: string
+              nullable: true
+            chain_tip:
+              type: string
         signature_kid:
           type: string
           nullable: true

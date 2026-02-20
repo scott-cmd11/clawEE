@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
+import Database from "better-sqlite3";
 
 import { loadChannelConnectorCatalog } from "../dist/channel-connector-catalog.js";
 import { ChannelDestinationPolicy } from "../dist/channel-destination-policy.js";
@@ -725,7 +726,21 @@ async function main() {
   const first = chainLines[0];
   const second = chainLines[1];
   assert.equal(second.previous_snapshot_hash, first.current_snapshot_hash);
+  const auditIntegrity = tempLedger.verifyIntegrity();
+  assert.equal(auditIntegrity.valid, true);
   tempLedger.close();
+
+  const tamperedDb = new Database(tempAuditDbPath);
+  tamperedDb
+    .prepare("UPDATE audit_logs SET current_hash = ? WHERE id = (SELECT MIN(id) FROM audit_logs)")
+    .run("0".repeat(64));
+  tamperedDb.close();
+  const tamperedLedger = new SqliteAuditLedger(tempAuditDbPath);
+  tamperedLedger.init();
+  const tamperedIntegrity = tamperedLedger.verifyIntegrity();
+  assert.equal(tamperedIntegrity.valid, false);
+  assert.equal(typeof tamperedIntegrity.reason, "string");
+  tamperedLedger.close();
   approvals.close();
 
   fs.rmSync(tempControlTokensPath, { force: true });

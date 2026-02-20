@@ -8,6 +8,7 @@ export type EnforcementMode = "warn" | "block";
 export type OutboundInternetPolicy = "deny" | "allow";
 export type RiskEvaluatorFailMode = "allow" | "block";
 export type ReplayStoreMode = "sqlite" | "redis";
+export type AuditStartupVerifyMode = "off" | "warn" | "block";
 
 export interface AppConfig {
   port: number;
@@ -33,6 +34,7 @@ export interface AppConfig {
   replayStoreMode: ReplayStoreMode;
   replayRedisUrl: string;
   replayRedisPrefix: string;
+  auditStartupVerifyMode: AuditStartupVerifyMode;
   pricingCatalogPath: string;
   hourlyUsdCap: number;
   dailyUsdCap: number;
@@ -225,6 +227,11 @@ export function loadConfig(): AppConfig {
     replayStoreMode: enumEnv<ReplayStoreMode>("REPLAY_STORE_MODE", "sqlite", ["sqlite", "redis"]),
     replayRedisUrl: process.env.REPLAY_REDIS_URL?.trim() || "",
     replayRedisPrefix: process.env.REPLAY_REDIS_PREFIX?.trim() || "clawee",
+    auditStartupVerifyMode: enumEnv<AuditStartupVerifyMode>(
+      "AUDIT_STARTUP_VERIFY_MODE",
+      "block",
+      ["off", "warn", "block"],
+    ),
     pricingCatalogPath,
     hourlyUsdCap: numberEnv("HOURLY_USD_CAP", 15),
     dailyUsdCap: numberEnv("DAILY_USD_CAP", 150),

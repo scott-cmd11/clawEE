@@ -20,7 +20,7 @@ import { ChannelHub, type ChannelKind } from "./channel-hub";
 import { ChannelDeliveryService } from "./channel-delivery-service";
 import { ChannelDestinationPolicy } from "./channel-destination-policy";
 import { BudgetController, type CostEstimate } from "./budget-controller";
-import type { EnforcementMode, RiskEvaluatorFailMode } from "./config";
+import type { AuditStartupVerifyMode, EnforcementMode, RiskEvaluatorFailMode } from "./config";
 import { type ControlPermission, type ControlIdentity, ControlAuthz } from "./control-authz";
 import type { RiskEvaluator, ToolIntent } from "./inference-provider";
 import { InteractionStore } from "./interaction-store";
@@ -38,6 +38,7 @@ export interface UncertaintyGateOptions {
   warnThreshold: number;
   evaluatorModel: string;
   riskEvaluatorFailMode: RiskEvaluatorFailMode;
+  auditStartupVerifyMode: AuditStartupVerifyMode;
   modelRegistryFingerprint: string;
   enforcementMode: EnforcementMode;
   controlAuthz: ControlAuthz;
@@ -578,6 +579,7 @@ export async function startUncertaintyGate(
       enforcement_mode: options.enforcementMode,
       warn_threshold: options.warnThreshold,
       risk_evaluator_fail_mode: options.riskEvaluatorFailMode,
+      audit_startup_verify_mode: options.auditStartupVerifyMode,
       max_request_input_tokens: options.maxRequestInputTokens,
       max_request_output_tokens: options.maxRequestOutputTokens,
       channel_ingress_event_ttl_seconds: options.channelIngressEventTtlSeconds,
@@ -723,6 +725,14 @@ export async function startUncertaintyGate(
     });
   });
 
+  app.get("/_clawee/control/audit/verify", controlAuth("audit.read"), (_req, res) => {
+    const report = ledger.verifyIntegrity();
+    res.status(report.valid ? 200 : 409).json({
+      ok: report.valid,
+      report,
+    });
+  });
+
   app.get("/_clawee/control/channel/inbound", controlAuth("channel.read"), (req, res) => {
     const rawLimit = Number(req.query.limit || 100);
     const limit = Number.isNaN(rawLimit) ? 100 : rawLimit;
@@ -784,6 +794,7 @@ export async function startUncertaintyGate(
       uptime_seconds: uptimeSeconds,
       timestamp: new Date().toISOString(),
       risk_evaluator_fail_mode: options.riskEvaluatorFailMode,
+      audit_startup_verify_mode: options.auditStartupVerifyMode,
       max_request_input_tokens: options.maxRequestInputTokens,
       max_request_output_tokens: options.maxRequestOutputTokens,
       channel_ingress_event_ttl_seconds: options.channelIngressEventTtlSeconds,

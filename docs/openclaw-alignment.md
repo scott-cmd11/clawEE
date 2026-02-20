@@ -21,6 +21,7 @@ Reference architecture source:
 ## Security-first delta beyond OpenClaw base runtime
 
 - Hash-chained audit ledger (tamper-evident provenance trail).
+- Startup/runtime audit-chain integrity verification (`AUDIT_STARTUP_VERIFY_MODE`, `/_clawee/control/audit/verify`).
 - Economic circuit breaker (hourly/daily hard caps with suspension).
 - Fail-closed risk gate mode (`RISK_EVALUATOR_FAIL_MODE=block`) for evaluator outages.
 - Approval workflow for high-risk actions and high-risk outbound messages.
@@ -45,5 +46,5 @@ Reference architecture source:
 ## Remaining roadmap (not fully solved in current MVP)
 
 - Formal non-bypass proofs for every critical action path.
-- Cluster-shared replay store (Redis/Postgres) for horizontally scaled multi-node deployments.
+- Postgres replay backend for horizontally scaled multi-node deployments (Redis mode is implemented).
 - Deep causal failure diagnosis loop for long-running autonomous plans.

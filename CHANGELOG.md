@@ -7,6 +7,8 @@
 - Added `verify-audit-chain` command in `scripts/security-tools.mjs` for offline/CI validation.
 - Added strict modality-ingest schema validation (`text|vision|audio|action`) with configurable payload size limits.
 - Added inbound channel text-size enforcement (`CHANNEL_INGRESS_MAX_TEXT_CHARS`) and explicit `413` responses for oversize payloads.
+- Added signed audit attestation payload/snapshot export + chain verification control endpoints.
+- Added audit-attestation signing key reload endpoint with static key and keyring support.
 
 ## 0.1.0
 

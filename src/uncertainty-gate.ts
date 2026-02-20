@@ -12,6 +12,7 @@ import type { AuditLedger } from "./audit-ledger";
 import { ApprovalService } from "./approval-service";
 import { ApprovalAttestationService } from "./approval-attestation";
 import { ApprovalPolicyEngine } from "./approval-policy";
+import { AuditAttestationService } from "./audit-attestation";
 import { AlertNotifier } from "./alert-notifier";
 import {
   CapabilityPolicyEngine,
@@ -490,6 +491,7 @@ export async function startUncertaintyGate(
   channelDeliveryService: ChannelDeliveryService,
   channelDestinationPolicy: ChannelDestinationPolicy,
   approvalAttestationService: ApprovalAttestationService,
+  auditAttestationService: AuditAttestationService,
   reloadHandlers?: {
     reloadPolicyCatalog?: () => { fingerprint: string };
     reloadModelRegistry?: () => { fingerprint: string };
@@ -612,6 +614,7 @@ export async function startUncertaintyGate(
     const connectorState = channelDeliveryService.getConnectorState();
     const destinationPolicyState = channelDestinationPolicy.getState();
     const attestationSigning = approvalAttestationService.getSigningState();
+    const auditAttestationSigning = auditAttestationService.getSigningState();
     const capabilityPolicyState = capabilityPolicy.getState();
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
@@ -640,6 +643,7 @@ export async function startUncertaintyGate(
       channel_connectors: connectorState,
       channel_destination_policy: destinationPolicyState,
       approval_attestation_signing: attestationSigning,
+      audit_attestation_signing: auditAttestationSigning,
       approval_policy: approvalPolicyState,
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
@@ -781,6 +785,65 @@ export async function startUncertaintyGate(
     });
   });
 
+  app.get("/_clawee/control/audit/attestation", controlAuth("audit.read"), (req, res) => {
+    const rawLimit = Number(req.query.limit || 1000);
+    const limit = Number.isNaN(rawLimit) ? 1000 : rawLimit;
+    const since = typeof req.query.since === "string" ? req.query.since : "";
+    const payload = auditAttestationService.generate(limit, since);
+    ledger.logAndSignAction("AUDIT_ATTESTATION_GENERATED", {
+      count: payload.count,
+      final_hash: payload.final_hash,
+      since: payload.since,
+    });
+    res.json(payload);
+  });
+
+  app.post("/_clawee/control/audit/attestation/export", controlAuth("audit.read"), (req, res) => {
+    const rawLimit = Number(req.body?.limit || 1000);
+    const limit = Number.isNaN(rawLimit) ? 1000 : rawLimit;
+    const since = typeof req.body?.since === "string" ? req.body.since : "";
+    const snapshotPath = typeof req.body?.snapshot_path === "string" ? req.body.snapshot_path : "";
+    const chainPath = typeof req.body?.chain_path === "string" ? req.body.chain_path : "";
+    const result = auditAttestationService.exportSealedSnapshot({
+      snapshotPath,
+      chainPath,
+      limit,
+      since,
+    });
+    ledger.logAndSignAction("AUDIT_ATTESTATION_EXPORTED", result);
+    res.json({ ok: true, ...result });
+  });
+
+  app.post("/_clawee/control/audit/attestation/verify", controlAuth("audit.read"), (req, res) => {
+    const snapshotPath = typeof req.body?.snapshot_path === "string" ? req.body.snapshot_path : "";
+    const chainPath = typeof req.body?.chain_path === "string" ? req.body.chain_path : "";
+    if (!snapshotPath) {
+      res.status(400).json({ error: "snapshot_path is required." });
+      return;
+    }
+    try {
+      const snapshot = auditAttestationService.verifySnapshotFile(snapshotPath);
+      const chain = chainPath
+        ? auditAttestationService.verifySealedChain(chainPath, { verifySnapshots: true })
+        : null;
+      const valid = snapshot.valid && (chain ? chain.valid : true);
+      ledger.logAndSignAction("AUDIT_ATTESTATION_VERIFIED", {
+        snapshot_path: snapshotPath,
+        chain_path: chainPath || null,
+        valid,
+        snapshot_valid: snapshot.valid,
+        chain_valid: chain?.valid ?? null,
+      });
+      res.status(valid ? 200 : 409).json({
+        ok: valid,
+        snapshot,
+        chain,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.get("/_clawee/control/channel/inbound", controlAuth("channel.read"), (req, res) => {
     const rawLimit = Number(req.query.limit || 100);
     const limit = Number.isNaN(rawLimit) ? 100 : rawLimit;
@@ -834,6 +897,7 @@ export async function startUncertaintyGate(
     const connectorState = channelDeliveryService.getConnectorState();
     const destinationPolicyState = channelDestinationPolicy.getState();
     const attestationSigning = approvalAttestationService.getSigningState();
+    const auditAttestationSigning = auditAttestationService.getSigningState();
     const capabilityPolicyState = capabilityPolicy.getState();
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
@@ -869,6 +933,7 @@ export async function startUncertaintyGate(
       channel_connectors: connectorState,
       channel_destination_policy: destinationPolicyState,
       approval_attestation_signing: attestationSigning,
+      audit_attestation_signing: auditAttestationSigning,
       approval_policy: approvalPolicyState,
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
@@ -1040,6 +1105,16 @@ export async function startUncertaintyGate(
       }
     },
   );
+
+  app.post("/_clawee/control/reload/audit-attestation-signing", controlAuth("audit.read"), (_req, res) => {
+    try {
+      const state = auditAttestationService.reloadSigningKeys();
+      ledger.logAndSignAction("AUDIT_ATTESTATION_SIGNING_RELOADED", state);
+      res.json({ ok: true, ...state });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
 
   app.post("/_clawee/control/channel/send", controlAuth("channel.send"), (req, res) => {
     const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;

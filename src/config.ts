@@ -99,6 +99,9 @@ export interface AppConfig {
   approvalAttestationDefaultPath: string;
   approvalAttestationSigningKey: string;
   approvalAttestationSigningKeyringPath: string;
+  auditAttestationDefaultPath: string;
+  auditAttestationSigningKey: string;
+  auditAttestationSigningKeyringPath: string;
   openclawHome: string;
   soulFilePath: string;
   agentsRootPath: string;
@@ -195,6 +198,9 @@ export function loadConfig(): AppConfig {
   const approvalAttestationDefaultPath =
     process.env.APPROVAL_ATTESTATION_DEFAULT_PATH?.trim() ||
     path.join(openclawHome, "approval_attestation.json");
+  const auditAttestationDefaultPath =
+    process.env.AUDIT_ATTESTATION_DEFAULT_PATH?.trim() ||
+    path.join(openclawHome, "audit_attestation.json");
   const approvalPolicyCatalogPath =
     process.env.APPROVAL_POLICY_CATALOG_PATH?.trim() ||
     path.join(process.cwd(), "config", "approval-policy-catalog.v1.json");
@@ -321,6 +327,10 @@ export function loadConfig(): AppConfig {
     approvalAttestationSigningKey: process.env.APPROVAL_ATTESTATION_SIGNING_KEY?.trim() || "",
     approvalAttestationSigningKeyringPath:
       process.env.APPROVAL_ATTESTATION_SIGNING_KEYRING_PATH?.trim() || "",
+    auditAttestationDefaultPath,
+    auditAttestationSigningKey: process.env.AUDIT_ATTESTATION_SIGNING_KEY?.trim() || "",
+    auditAttestationSigningKeyringPath:
+      process.env.AUDIT_ATTESTATION_SIGNING_KEYRING_PATH?.trim() || "",
     openclawHome,
     soulFilePath,
     agentsRootPath,

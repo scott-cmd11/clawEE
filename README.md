@@ -54,6 +54,8 @@ Optional:
 - `CHANNEL_MAX_OUTBOUND_CHARS` (hard cap for outbound channel message size)
 - `APPROVAL_ATTESTATION_DEFAULT_PATH` / `APPROVAL_ATTESTATION_SIGNING_KEY`
 - `APPROVAL_ATTESTATION_SIGNING_KEYRING_PATH` (optional keyring for attestation signing rotation)
+- `AUDIT_ATTESTATION_DEFAULT_PATH` / `AUDIT_ATTESTATION_SIGNING_KEY`
+- `AUDIT_ATTESTATION_SIGNING_KEYRING_PATH` (optional keyring for audit-attestation signing rotation)
 - `APPROVAL_ATTESTATION_PERIODIC_ENABLED`
 - `APPROVAL_ATTESTATION_PERIODIC_INTERVAL_SECONDS`
 - `APPROVAL_ATTESTATION_SNAPSHOT_DIRECTORY` / `APPROVAL_ATTESTATION_CHAIN_PATH`
@@ -147,6 +149,9 @@ By default, `CONTROL_API_TOKEN` has full access. If `CONTROL_TOKENS_PATH` is con
 - `POST /_clawee/control/approvals/:id/deny`
 - `GET /_clawee/control/audit/recent?limit=100`
 - `GET /_clawee/control/audit/verify`
+- `GET /_clawee/control/audit/attestation?limit=1000&since=<iso8601>`
+- `POST /_clawee/control/audit/attestation/export`
+- `POST /_clawee/control/audit/attestation/verify`
 - `POST /_clawee/control/modality/ingest`
 - `GET /_clawee/control/modality/recent?limit=100`
 - `GET /_clawee/control/channel/inbound?limit=100`
@@ -166,6 +171,7 @@ By default, `CONTROL_API_TOKEN` has full access. If `CONTROL_TOKENS_PATH` is con
 - `POST /_clawee/control/approvals/attestation/export`
 - `POST /_clawee/control/approvals/attestation/verify`
 - `POST /_clawee/control/reload/approval-attestation-signing`
+- `POST /_clawee/control/reload/audit-attestation-signing`
 
 Channel ingress endpoint (for corporate connectors):
 
@@ -227,6 +233,7 @@ Channel ingress endpoint (for corporate connectors):
 - Example capability-catalog keyring: `config/capability-catalog-signing-keyring.v1.example.json`
 - Example approval-policy keyring: `config/approval-policy-catalog-signing-keyring.v1.example.json`
 - Approval attestation exports produce hash-chained records and optional HMAC signature.
+- Audit attestation exports produce hash-chained records and optional HMAC signature.
 - Example attestation keyring: `config/approval-attestation-signing-keyring.v1.example.json`
 - `POST /_clawee/control/approvals/attestation/export` writes sealed snapshot + append-only chain (`snapshot_path`/`chain_path` optional in body).
 - Optional periodic attestation job can auto-export sealed snapshots on interval.

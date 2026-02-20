@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { ApprovalService } from "../dist/approval-service.js";
 import { ApprovalAttestationService } from "../dist/approval-attestation.js";
+import { AuditAttestationService } from "../dist/audit-attestation.js";
 import {
   ApprovalPolicyEngine,
   loadSignedApprovalPolicyCatalog,
@@ -238,6 +239,11 @@ async function main() {
     path.join(tmpDir, "approval-attestation.json"),
     "",
   );
+  const auditAttestationService = new AuditAttestationService(
+    ledger,
+    path.join(tmpDir, "audit-attestation.json"),
+    "",
+  );
   const policyCatalog = loadSignedPolicyCatalog(
     path.join(projectRoot, "config", "policy-catalog.v1.json"),
     "change_me_policy_key",
@@ -381,6 +387,7 @@ async function main() {
       channelDelivery,
       destinationPolicy,
       approvalAttestationService,
+      auditAttestationService,
       {
         reloadApprovalPolicyCatalog: () => {
           const reloaded = loadSignedApprovalPolicyCatalog(
@@ -910,6 +917,60 @@ async function main() {
     assert.equal(auditVerifyJson.report.valid, true);
     assert.ok(Number(auditVerifyJson.report.checked_rows) > 0);
 
+    const auditAttestationRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/audit/attestation?limit=500`,
+      {
+        headers: {
+          authorization: `Bearer ${controlToken}`,
+        },
+      },
+    );
+    assert.equal(auditAttestationRes.status, 200);
+    const auditAttestationJson = await auditAttestationRes.json();
+    assert.ok(typeof auditAttestationJson.final_hash === "string");
+    assert.ok(Number(auditAttestationJson.count) > 0);
+
+    const auditSnapshotPath = path.join(tmpDir, "audit-attestation-snapshot.json");
+    const auditChainPath = path.join(tmpDir, "audit-attestation-chain.jsonl");
+    const auditExportRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/audit/attestation/export`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({
+          snapshot_path: auditSnapshotPath,
+          chain_path: auditChainPath,
+          limit: 500,
+        }),
+      },
+    );
+    assert.equal(auditExportRes.status, 200);
+    const auditExportJson = await auditExportRes.json();
+    assert.equal(auditExportJson.ok, true);
+    assert.equal(fs.existsSync(auditSnapshotPath), true);
+    assert.equal(fs.existsSync(auditChainPath), true);
+
+    const auditVerifySnapshotRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/audit/attestation/verify`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({
+          snapshot_path: auditSnapshotPath,
+          chain_path: auditChainPath,
+        }),
+      },
+    );
+    assert.equal(auditVerifySnapshotRes.status, 200);
+    const auditVerifySnapshotJson = await auditVerifySnapshotRes.json();
+    assert.equal(auditVerifySnapshotJson.ok, true);
+
     const signingReloadDenied = await fetch(
       `http://127.0.0.1:${gatePort}/_clawee/control/reload/approval-attestation-signing`,
       {
@@ -930,6 +991,16 @@ async function main() {
       },
     );
     assert.equal(signingReloadAllowed.status, 200);
+    const auditSigningReloadAllowed = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/reload/audit-attestation-signing`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${controlToken}`,
+        },
+      },
+    );
+    assert.equal(auditSigningReloadAllowed.status, 200);
   } finally {
     if (gate) {
       await gate.close();

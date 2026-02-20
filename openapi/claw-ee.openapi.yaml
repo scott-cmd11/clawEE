@@ -142,6 +142,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResponse"
+  /_clawee/control/audit/attestation:
+    get:
+      summary: Generate audit attestation payload
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Audit attestation payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditAttestationPayload"
+  /_clawee/control/audit/attestation/export:
+    post:
+      summary: Export sealed audit attestation snapshot
+      responses:
+        "200":
+          description: Export metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  snapshot_path:
+                    type: string
+                  chain_path:
+                    type: string
+                  count:
+                    type: integer
+                  final_hash:
+                    type: string
+  /_clawee/control/audit/attestation/verify:
+    post:
+      summary: Verify audit snapshot and optional chain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshot_path]
+              properties:
+                snapshot_path:
+                  type: string
+                chain_path:
+                  type: string
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  snapshot:
+                    type: object
+                    additionalProperties: true
+                  chain:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+        "409":
+          description: Verification failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  snapshot:
+                    type: object
+                    additionalProperties: true
+                  chain:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
   /_clawee/control/approvals/attestation:
     get:
       summary: Generate approval attestation payload
@@ -337,6 +426,17 @@ paths:
   /_clawee/control/reload/approval-attestation-signing:
     post:
       summary: Reload approval attestation signing keys
+      responses:
+        "200":
+          description: Signing state
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /_clawee/control/reload/audit-attestation-signing:
+    post:
+      summary: Reload audit attestation signing keys
       responses:
         "200":
           description: Signing state
@@ -704,6 +804,30 @@ components:
               nullable: true
             chain_tip:
               type: string
+    AuditAttestationPayload:
+      type: object
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        since:
+          type: string
+          nullable: true
+        count:
+          type: integer
+        entries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        final_hash:
+          type: string
+        signature:
+          type: string
+          nullable: true
+        signature_kid:
+          type: string
+          nullable: true
         signature_kid:
           type: string
           nullable: true

@@ -22,6 +22,7 @@ Reference architecture source:
 
 - Hash-chained audit ledger (tamper-evident provenance trail).
 - Startup/runtime audit-chain integrity verification (`AUDIT_STARTUP_VERIFY_MODE`, `/_clawee/control/audit/verify`).
+- Audit attestation export/verification with sealed append-only snapshot chain.
 - Strict modality envelope/payload schema checks with modality-specific size caps.
 - Economic circuit breaker (hourly/daily hard caps with suspension).
 - Fail-closed risk gate mode (`RISK_EVALUATOR_FAIL_MODE=block`) for evaluator outages.

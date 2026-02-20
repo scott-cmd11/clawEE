@@ -30,6 +30,10 @@ export type AuditActionType =
   | "APPROVAL_ATTESTATION_VERIFIED"
   | "APPROVAL_ATTESTATION_SIGNING_RELOADED"
   | "APPROVAL_ATTESTATION_SNAPSHOTS_PRUNED"
+  | "AUDIT_ATTESTATION_GENERATED"
+  | "AUDIT_ATTESTATION_EXPORTED"
+  | "AUDIT_ATTESTATION_VERIFIED"
+  | "AUDIT_ATTESTATION_SIGNING_RELOADED"
   | "APPROVAL_POLICY_LOADED"
   | "APPROVAL_POLICY_RELOADED"
   | "HEARTBEAT_TICK"
@@ -96,6 +100,7 @@ export interface AuditLedger {
   init(): void;
   logAndSignAction(actionType: AuditActionType, payload: unknown): AuditRow;
   getRecent(limit?: number): AuditRow[];
+  listForAttestation(limit?: number, since?: string): AuditRow[];
   getCount(): number;
   verifyIntegrity(): AuditIntegrityReport;
   close(): void;
@@ -170,6 +175,35 @@ export class SqliteAuditLedger implements AuditLedger {
           SELECT id, timestamp, action_type, payload, previous_hash, current_hash
           FROM audit_logs
           ORDER BY id DESC
+          LIMIT ?
+        `,
+      )
+      .all(safeLimit) as AuditRow[];
+  }
+
+  listForAttestation(limit = 1000, since = ""): AuditRow[] {
+    const db = this.assertDb();
+    const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 20000);
+    const sinceValue = since.trim();
+    if (sinceValue) {
+      return db
+        .prepare(
+          `
+            SELECT id, timestamp, action_type, payload, previous_hash, current_hash
+            FROM audit_logs
+            WHERE timestamp > ?
+            ORDER BY id ASC
+            LIMIT ?
+          `,
+        )
+        .all(sinceValue, safeLimit) as AuditRow[];
+    }
+    return db
+      .prepare(
+        `
+          SELECT id, timestamp, action_type, payload, previous_hash, current_hash
+          FROM audit_logs
+          ORDER BY id ASC
           LIMIT ?
         `,
       )

@@ -2,6 +2,7 @@ import path from "node:path";
 import { ApprovalService } from "./approval-service";
 import { ApprovalAttestationService } from "./approval-attestation";
 import { ApprovalAttestationJobService } from "./approval-attestation-job";
+import { AuditAttestationService } from "./audit-attestation";
 import {
   ApprovalPolicyEngine,
   loadSignedApprovalPolicyCatalog,
@@ -121,6 +122,12 @@ async function main(): Promise<void> {
     config.approvalAttestationDefaultPath,
     config.approvalAttestationSigningKey,
     config.approvalAttestationSigningKeyringPath,
+  );
+  const auditAttestationService = new AuditAttestationService(
+    ledger,
+    config.auditAttestationDefaultPath,
+    config.auditAttestationSigningKey,
+    config.auditAttestationSigningKeyringPath,
   );
   const approvalAttestationJob = new ApprovalAttestationJobService(
     {
@@ -375,6 +382,7 @@ async function main(): Promise<void> {
     channelDelivery,
     channelDestinationPolicy,
     approvalAttestationService,
+    auditAttestationService,
     {
       reloadPolicyCatalog: () => {
         const reloaded = loadSignedPolicyCatalog(

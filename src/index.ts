@@ -23,6 +23,8 @@ import { loadConfig } from "./config";
 import { ControlAuthz } from "./control-authz";
 import { HeartbeatService } from "./heartbeat-service";
 import { InternalGatewayRiskEvaluator } from "./inference-provider";
+import { InitiativeEngine } from "./initiative-engine";
+import { InitiativeStore } from "./initiative-store";
 import { InteractionStore } from "./interaction-store";
 import { ModelRegistry } from "./model-registry";
 import { ModalityHub } from "./modality-hub";
@@ -212,6 +214,25 @@ async function main(): Promise<void> {
   const channelHub = new ChannelHub(2000);
   const interactionStore = new InteractionStore(config.interactionDbPath);
   interactionStore.init();
+  let initiativeStore: InitiativeStore | null = null;
+  let initiativeEngine: InitiativeEngine | null = null;
+  if (config.initiativeEngineEnabled) {
+    initiativeStore = new InitiativeStore(config.initiativeDbPath);
+    initiativeStore.init();
+    initiativeEngine = new InitiativeEngine(
+      {
+        enabled: config.initiativeEngineEnabled,
+        pollSeconds: config.initiativePollSeconds,
+        maxTaskRetries: config.initiativeMaxTaskRetries,
+        nodeId: config.nodeId,
+      },
+      initiativeStore,
+      channelHub,
+      interactionStore,
+      ledger,
+    );
+    await initiativeEngine.start();
+  }
   const replayStore = createReplayStore(
     {
       mode: config.replayStoreMode,
@@ -361,6 +382,8 @@ async function main(): Promise<void> {
       ...configFingerprints,
       replay_store_mode: config.replayStoreMode,
       security_invariants_enforcement: config.securityInvariantsEnforcement,
+      initiative_engine_enabled: config.initiativeEngineEnabled,
+      initiative_poll_seconds: config.initiativePollSeconds,
       node_id: config.nodeId,
       cluster_id: config.clusterId,
     }),
@@ -377,10 +400,19 @@ async function main(): Promise<void> {
       model_registry_fingerprint: modelRegistry.getFingerprint(),
       replay_store_mode: config.replayStoreMode,
       replay_store_state: replayStore.getState(),
+      initiative_engine_enabled: config.initiativeEngineEnabled,
+      initiative_poll_seconds: config.initiativePollSeconds,
+      initiative_max_task_retries: config.initiativeMaxTaskRetries,
       config_fingerprints: configFingerprints,
     },
     signingKey: config.securityConformanceSigningKey,
     signingKeyringPath: config.securityConformanceSigningKeyringPath,
+  });
+  ledger.logAndSignAction("INITIATIVE_ENGINE_READY", {
+    enabled: config.initiativeEngineEnabled,
+    poll_seconds: config.initiativePollSeconds,
+    max_task_retries: config.initiativeMaxTaskRetries,
+    db_path: config.initiativeDbPath,
   });
 
   const gate = await startUncertaintyGate(
@@ -474,6 +506,7 @@ async function main(): Promise<void> {
         return { fingerprint: reloaded.fingerprint };
       },
     },
+    initiativeEngine || undefined,
   );
 
   await affective.start();
@@ -493,10 +526,14 @@ async function main(): Promise<void> {
     try {
       await affective.stop();
       await heartbeat.stop();
+      if (initiativeEngine) {
+        await initiativeEngine.stop();
+      }
       approvalAttestationJob.stop();
       await gate.close();
       await replayStore.close();
       channelDelivery.stop();
+      initiativeStore?.close();
       interactionStore.close();
       approvalService.close();
       budgetController.close();

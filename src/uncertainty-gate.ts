@@ -30,6 +30,7 @@ import type {
 import { type ControlPermission, type ControlIdentity, ControlAuthz } from "./control-authz";
 import type { RiskEvaluator, ToolIntent } from "./inference-provider";
 import { InteractionStore } from "./interaction-store";
+import type { InitiativeControlService } from "./initiative-engine";
 import { validateModalityPayload, type ModalityPayloadValidationOptions } from "./modality-validation";
 import { ModelRegistry, type ModelModality } from "./model-registry";
 import { ModalityHub, type ModalityType } from "./modality-hub";
@@ -511,6 +512,7 @@ export async function startUncertaintyGate(
     reloadApprovalPolicyCatalog?: () => { fingerprint: string };
     reloadCapabilityCatalog?: () => { fingerprint: string };
   },
+  initiativeService?: InitiativeControlService,
 ): Promise<UncertaintyGateService> {
   const app = express();
   const sendAlert = async (
@@ -644,6 +646,13 @@ export async function startUncertaintyGate(
       (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity = identity;
       next();
     };
+  const getInitiativeService = (res: express.Response): InitiativeControlService | null => {
+    if (!initiativeService || !initiativeService.isEnabled()) {
+      res.status(503).json({ error: "Initiative engine is not enabled." });
+      return null;
+    }
+    return initiativeService;
+  };
 
   app.get("/_clawee/control/status", controlAuth("system.read"), (_req, res) => {
     const status = budgetController.getStatus();
@@ -657,6 +666,7 @@ export async function startUncertaintyGate(
     const capabilityPolicyState = capabilityPolicy.getState();
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
+    const initiativeStats = initiativeService ? initiativeService.getStats() : { enabled: false };
     res.json({
       enforcement_mode: options.enforcementMode,
       node_id: options.nodeId,
@@ -695,6 +705,7 @@ export async function startUncertaintyGate(
       approval_policy: approvalPolicyState,
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
+      initiatives: initiativeStats,
     });
   });
 
@@ -1007,6 +1018,208 @@ export async function startUncertaintyGate(
     }
   });
 
+  app.get("/_clawee/control/initiatives", controlAuth("initiative.read"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const rawLimit = Number(req.query.limit || 100);
+    const statusRaw = String(req.query.status || "").trim().toLowerCase();
+    const sourceRaw = String(req.query.source || "").trim().toLowerCase();
+    const priorityRaw = String(req.query.priority || "").trim().toLowerCase();
+    const status =
+      statusRaw && ["pending", "running", "paused", "completed", "cancelled", "failed"].includes(statusRaw)
+        ? (statusRaw as "pending" | "running" | "paused" | "completed" | "cancelled" | "failed")
+        : undefined;
+    const priority =
+      priorityRaw && ["low", "normal", "high", "urgent"].includes(priorityRaw)
+        ? (priorityRaw as "low" | "normal" | "high" | "urgent")
+        : undefined;
+    const initiatives = svc.listInitiatives({
+      status,
+      source: sourceRaw || undefined,
+      priority,
+      limit: Number.isFinite(rawLimit) ? rawLimit : 100,
+    });
+    res.json({
+      count: initiatives.length,
+      initiatives,
+    });
+  });
+
+  app.post("/_clawee/control/initiatives", controlAuth("initiative.write"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;
+    const source = String(req.body?.source || "manual").trim().toLowerCase();
+    const title = String(req.body?.title || "").trim();
+    if (!title) {
+      res.status(400).json({ error: "Initiative title is required." });
+      return;
+    }
+    const tasksRaw: unknown[] = Array.isArray(req.body?.tasks) ? (req.body.tasks as unknown[]) : [];
+    const tasks = tasksRaw
+      .filter(
+        (task: unknown): task is Record<string, unknown> =>
+          Boolean(task) && typeof task === "object" && !Array.isArray(task),
+      )
+      .map((row) => {
+        return {
+          task_type: String(row.task_type || "").trim().toLowerCase(),
+          payload:
+            row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+              ? (row.payload as Record<string, unknown>)
+              : {},
+          max_retries: Number(row.max_retries || 3),
+        };
+      })
+      .filter((task: { task_type: string }) => task.task_type.length > 0);
+
+    const priorityRaw = String(req.body?.priority || "").trim().toLowerCase();
+    const riskClassRaw = String(req.body?.risk_class || "").trim().toLowerCase();
+    const priority =
+      priorityRaw && ["low", "normal", "high", "urgent"].includes(priorityRaw)
+        ? (priorityRaw as "low" | "normal" | "high" | "urgent")
+        : undefined;
+    const riskClass =
+      riskClassRaw && ["low", "medium", "high", "critical"].includes(riskClassRaw)
+        ? (riskClassRaw as "low" | "medium" | "high" | "critical")
+        : undefined;
+    const created = svc.createInitiative({
+      source,
+      external_ref: String(req.body?.external_ref || "").trim() || undefined,
+      title,
+      description: String(req.body?.description || "").trim() || undefined,
+      priority,
+      risk_class: riskClass,
+      metadata:
+        req.body?.metadata && typeof req.body.metadata === "object" && !Array.isArray(req.body.metadata)
+          ? (req.body.metadata as Record<string, unknown>)
+          : {},
+      requested_by: identity?.principal || "manual-operator",
+      tasks,
+    });
+    res.status(created.created ? 201 : 200).json({
+      ok: true,
+      created: created.created,
+      initiative: created.initiative,
+      tasks: created.tasks,
+    });
+  });
+
+  app.get("/_clawee/control/initiatives/:id/tasks", controlAuth("initiative.read"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const initiative = svc.getInitiative(req.params.id);
+    if (!initiative) {
+      res.status(404).json({ error: "Initiative not found." });
+      return;
+    }
+    const tasks = svc.listInitiativeTasks(req.params.id);
+    res.json({
+      initiative,
+      count: tasks.length,
+      tasks,
+    });
+  });
+
+  app.get("/_clawee/control/initiatives/:id/events", controlAuth("initiative.read"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const initiative = svc.getInitiative(req.params.id);
+    if (!initiative) {
+      res.status(404).json({ error: "Initiative not found." });
+      return;
+    }
+    const rawLimit = Number(req.query.limit || 200);
+    const events = svc.listInitiativeEvents(
+      req.params.id,
+      Number.isFinite(rawLimit) ? rawLimit : 200,
+    );
+    res.json({
+      initiative,
+      count: events.length,
+      events,
+    });
+  });
+
+  app.post("/_clawee/control/initiatives/:id/start", controlAuth("initiative.write"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;
+    try {
+      const initiative = svc.startInitiative(req.params.id, identity?.principal || "manual-operator");
+      res.json({ ok: true, initiative });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/_clawee/control/initiatives/:id/pause", controlAuth("initiative.write"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;
+    const reason = String(req.body?.reason || "").trim();
+    try {
+      const initiative = svc.pauseInitiative(
+        req.params.id,
+        identity?.principal || "manual-operator",
+        reason,
+      );
+      res.json({ ok: true, initiative });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/_clawee/control/initiatives/:id/cancel", controlAuth("initiative.write"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;
+    const reason = String(req.body?.reason || "").trim();
+    try {
+      const initiative = svc.cancelInitiative(
+        req.params.id,
+        identity?.principal || "manual-operator",
+        reason,
+      );
+      res.json({ ok: true, initiative });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/_clawee/control/initiatives/:id/interrupt", controlAuth("initiative.write"), (req, res) => {
+    const svc = getInitiativeService(res);
+    if (!svc) {
+      return;
+    }
+    const identity = (req as Request & { controlIdentity?: ControlIdentity }).controlIdentity;
+    const reason = String(req.body?.reason || "manual-interrupt").trim() || "manual-interrupt";
+    try {
+      const initiative = svc.interruptInitiative(
+        req.params.id,
+        identity?.principal || "manual-operator",
+        reason,
+      );
+      res.json({ ok: true, initiative });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.get("/_clawee/control/metrics", controlAuth("system.read"), (_req, res) => {
     const uptimeSeconds = Math.floor(process.uptime());
     const controlAuthzState = options.controlAuthz.getState();
@@ -1019,6 +1232,7 @@ export async function startUncertaintyGate(
     const capabilityPolicyState = capabilityPolicy.getState();
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
+    const initiativeStats = initiativeService ? initiativeService.getStats() : { enabled: false };
     res.json({
       service: "claw-ee",
       node_id: options.nodeId,
@@ -1064,6 +1278,7 @@ export async function startUncertaintyGate(
       approval_policy: approvalPolicyState,
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
+      initiatives: initiativeStats,
       process: {
         pid: process.pid,
         memory_rss: process.memoryUsage().rss,

@@ -21,6 +21,7 @@ Claw-EE provides those controls without requiring OpenClaw core changes.
 | Prompt injection / dangerous tool use | Policy engine + risk gate + approval workflow | `/_clawee/control/status`, audit ledger |
 | Replay / connector abuse | HMAC validation + nonce/event replay store (`sqlite`, `redis`, `postgres`) | `/_clawee/control/metrics`, replay store state |
 | Cost runaway / agentic drift | Economic circuit breaker (`HOURLY_USD_CAP`, `DAILY_USD_CAP`) | budget state in status/metrics |
+| Proactive initiative execution | Initiative Engine (task queue, retries, interrupt/start/pause/cancel) | `/_clawee/control/initiatives*`, initiative DB + audit ledger |
 | Model/provider drift | Signed model registry and policy catalogs | catalog fingerprints in status/conformance |
 | Governance and accountability | Hash-chained audit + signed attestations + conformance exports | attestation/conformance endpoints |
 
@@ -32,6 +33,19 @@ OpenClaw -> Claw-EE gateway -> policy/risk/approval/budget checks -> upstream mo
 
 OpenClaw runtime mapping: `docs/openclaw-alignment.md`  
 API contract: `openapi/claw-ee.openapi.yaml`
+
+## Synthetic Worker Scope
+
+Claw-EE is designed as the enterprise control-plane around OpenClaw.  
+OpenClaw is the execution brain; Claw-EE provides policy, safety, cost control, and initiative orchestration.
+
+Current implementation status by modality stack:
+
+- Text + code ("brain"): implemented via gateway control, policy, approvals, and channel operations.
+- Action + tool use ("hands"): implemented as guarded execution path (risk gate, capability policy, approval, audit).
+- Vision + screen parsing ("eyes"): partial. Structured vision ingestion exists (`/_clawee/control/modality/ingest`), full VDI computer-use loop is roadmap.
+- Audio + meeting presence ("ears/voice"): partial. Structured audio ingestion exists (`/_clawee/control/modality/ingest`), live meeting bot/WebRTC/TTS is roadmap.
+- Proactive work queue ("initiative"): implemented. Initiatives and tasks can be created, started, paused, interrupted, and audited.
 
 ## Quickstart (10 minutes)
 
@@ -64,6 +78,11 @@ npm run start
 npm run smoke:security
 npm run repo:check
 ```
+
+5. Optional: enable proactive initiative execution in `.env`:
+
+- `INITIATIVE_ENGINE_ENABLED=true`
+- `INITIATIVE_POLL_SECONDS=15`
 
 Windows fallback if `npm.ps1` is blocked:
 
@@ -107,8 +126,34 @@ Core groups:
 - Audit/security: recent audit, audit verify, attestation export/verify, conformance export/verify, invariants
 - Channel operations: inbound/outbound visibility, send, delivery, retry, connector reload
 - Modality ingest: validated `text|vision|audio|action` payload intake
+- Initiative engine: create/list/start/pause/cancel/interrupt initiatives and inspect task/event history
 
 Full endpoint details: `openapi/claw-ee.openapi.yaml`
+
+### Initiative API quick example
+
+```powershell
+$token = "your-control-token"
+$headers = @{ Authorization = "Bearer $token" }
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/_clawee/control/initiatives" -Headers $headers -ContentType "application/json" -Body '{
+  "source":"jira",
+  "external_ref":"PROJ-123",
+  "title":"Prepare status update",
+  "priority":"normal",
+  "risk_class":"low",
+  "tasks":[
+    {
+      "task_type":"channel.send",
+      "payload":{
+        "channel":"slack",
+        "destination":"team-updates",
+        "text":"Status update prepared by Claw-EE initiative engine."
+      }
+    }
+  ]
+}'
+```
 
 ## Configuration Reference
 
@@ -129,6 +174,13 @@ Use `.env.example` as the full source of truth. High-impact groups:
 - `REPLAY_POSTGRES_URL`, `REPLAY_POSTGRES_SCHEMA`, `REPLAY_POSTGRES_TABLE_PREFIX`
 - `REPLAY_POSTGRES_CONNECT_TIMEOUT_MS`, `REPLAY_POSTGRES_SSL_MODE`
 - `CLAWEE_NODE_ID`, `CLAWEE_CLUSTER_ID`
+
+### Initiative engine (proactive queue)
+
+- `INITIATIVE_ENGINE_ENABLED`
+- `INITIATIVE_POLL_SECONDS`
+- `INITIATIVE_MAX_TASK_RETRIES`
+- `INITIATIVE_DB_PATH`
 
 ### Budget and guardrails
 

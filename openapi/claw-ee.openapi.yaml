@@ -440,6 +440,200 @@ paths:
                 properties:
                   ok:
                     type: boolean
+  /_clawee/control/initiatives:
+    get:
+      summary: List initiatives
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, paused, completed, cancelled, failed]
+        - name: source
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, normal, high, urgent]
+      responses:
+        "200":
+          description: Initiative list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  initiatives:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InitiativeRecord"
+    post:
+      summary: Create an initiative
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiativeCreateRequest"
+      responses:
+        "200":
+          description: Existing initiative returned (deduped)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeCreateResponse"
+        "201":
+          description: Initiative created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeCreateResponse"
+  /_clawee/control/initiatives/{id}/tasks:
+    get:
+      summary: List tasks for an initiative
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+      responses:
+        "200":
+          description: Initiative task list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  initiative:
+                    $ref: "#/components/schemas/InitiativeRecord"
+                  count:
+                    type: integer
+                  tasks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InitiativeTaskRecord"
+        "404":
+          description: Initiative not found
+  /_clawee/control/initiatives/{id}/events:
+    get:
+      summary: List initiative events (latest first)
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+      responses:
+        "200":
+          description: Initiative event list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  initiative:
+                    $ref: "#/components/schemas/InitiativeRecord"
+                  count:
+                    type: integer
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InitiativeEventRecord"
+        "404":
+          description: Initiative not found
+  /_clawee/control/initiatives/{id}/start:
+    post:
+      summary: Start an initiative
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+      responses:
+        "200":
+          description: Initiative started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeStatusResponse"
+        "404":
+          description: Initiative not found
+  /_clawee/control/initiatives/{id}/pause:
+    post:
+      summary: Pause an initiative
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Initiative paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeStatusResponse"
+        "404":
+          description: Initiative not found
+  /_clawee/control/initiatives/{id}/cancel:
+    post:
+      summary: Cancel an initiative
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Initiative cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeStatusResponse"
+        "404":
+          description: Initiative not found
+  /_clawee/control/initiatives/{id}/interrupt:
+    post:
+      summary: Interrupt an initiative (pauses active work)
+      parameters:
+        - $ref: "#/components/parameters/InitiativeId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Initiative interrupted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeStatusResponse"
+        "404":
+          description: Initiative not found
   /_clawee/control/reload/policies:
     post:
       summary: Reload policy catalog
@@ -614,6 +808,12 @@ components:
       required: true
       schema:
         type: string
+    InitiativeId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
   responses:
     OkStatus:
       description: Action accepted and status returned
@@ -639,6 +839,199 @@ components:
               fingerprint:
                 type: string
   schemas:
+    InitiativeRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        external_ref:
+          type: string
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        risk_class:
+          type: string
+          enum: [low, medium, high, critical]
+        status:
+          type: string
+          enum: [pending, running, paused, completed, cancelled, failed]
+        requested_by:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+    InitiativeTaskRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        initiative_id:
+          type: string
+        sequence:
+          type: integer
+        task_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [queued, running, retry, completed, failed, cancelled]
+        retry_count:
+          type: integer
+        max_retries:
+          type: integer
+        next_run_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+    InitiativeEventRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        initiative_id:
+          type: string
+        task_id:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+        actor:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+        previous_hash:
+          type: string
+        current_hash:
+          type: string
+    InitiativeStats:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        total:
+          type: integer
+        pending:
+          type: integer
+        running:
+          type: integer
+        paused:
+          type: integer
+        completed:
+          type: integer
+        cancelled:
+          type: integer
+        failed:
+          type: integer
+        task_queued:
+          type: integer
+        task_running:
+          type: integer
+        task_retry:
+          type: integer
+        task_failed:
+          type: integer
+    InitiativeCreateTaskRequest:
+      type: object
+      required: [task_type]
+      properties:
+        task_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        max_retries:
+          type: integer
+    InitiativeCreateRequest:
+      type: object
+      required: [source, title]
+      properties:
+        source:
+          type: string
+        external_ref:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        risk_class:
+          type: string
+          enum: [low, medium, high, critical]
+        metadata:
+          type: object
+          additionalProperties: true
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/InitiativeCreateTaskRequest"
+    InitiativeCreateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        created:
+          type: boolean
+        initiative:
+          $ref: "#/components/schemas/InitiativeRecord"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/InitiativeTaskRecord"
+    InitiativeStatusResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        initiative:
+          $ref: "#/components/schemas/InitiativeRecord"
     ModalityIngestRequest:
       oneOf:
         - $ref: "#/components/schemas/ModalityIngestTextRequest"
@@ -953,6 +1346,8 @@ components:
         replay_store:
           type: object
           additionalProperties: true
+        initiatives:
+          $ref: "#/components/schemas/InitiativeStats"
         config_fingerprints:
           type: object
           additionalProperties:
@@ -980,6 +1375,8 @@ components:
         interactions:
           type: object
           additionalProperties: true
+        initiatives:
+          $ref: "#/components/schemas/InitiativeStats"
         process:
           type: object
           additionalProperties: true

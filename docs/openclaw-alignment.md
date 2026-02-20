@@ -9,6 +9,8 @@ Reference architecture source:
 
 - `openclaw daemon` / background operation
   - Claw-EE maps this to `HeartbeatService` plus runtime egress enforcement and budget circuit breaking.
+- Proactive task execution / "initiative" behavior
+  - Claw-EE maps this to `InitiativeEngine` + `InitiativeStore` with task retries, interrupt handling, and hash-chained initiative events.
 - Built-in skills and direct host actions (`run shell`, file writes, browser automation)
   - Claw-EE maps this to policy engine block/approval gates, uncertainty scoring, and model registry checks before forwarding.
 - Workspace memory (`SOUL.md`, agent session logs under `.openclaw`)
@@ -17,6 +19,8 @@ Reference architecture source:
   - Claw-EE maps this to authenticated channel ingress, strict ingress payload validation, signed channel delivery, and delivery lifecycle state tracking.
 - Model/provider configuration (`OPENCLAW_MODEL`, API base URLs, enterprise providers)
   - Claw-EE maps this to air-gap attestation, runtime DNS/IP revalidation, TLS/mTLS hardening, and signed model registry policy.
+- Modality ingestion (`text`, `vision`, `audio`, `action`)
+  - Claw-EE maps this to strict schema validation, payload bounds, and audit-backed ingestion endpoints for multimodal event streams.
 
 ## Security-first delta beyond OpenClaw base runtime
 
@@ -48,5 +52,9 @@ Reference architecture source:
 
 ## Remaining roadmap (not fully solved in current MVP)
 
+- Full VDI computer-use runtime (persistent desktop/session sandbox with vision-to-action loop).
+- Live synchronous meeting presence (calendar join, real-time STT diarization, low-latency TTS response loop).
+- Enterprise IAM/SSO bridge for dedicated synthetic worker identities and revocation lifecycle.
+- Event/webhook-native initiative intake adapters (Jira/Linear/PagerDuty connectors with typed task templates).
 - Formal machine-checked proofs for every critical action path (current implementation is runtime/static enforcement, not theorem-proved).
 - Deep causal failure diagnosis loop for long-running autonomous plans.

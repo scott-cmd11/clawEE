@@ -23,6 +23,8 @@ export type ControlPermission =
   | "channel.destination.reload"
   | "modality.read"
   | "modality.write"
+  | "initiative.read"
+  | "initiative.write"
   | "policy.reload"
   | "model.reload"
   | "authz.reload"

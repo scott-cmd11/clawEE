@@ -92,6 +92,10 @@ export interface AppConfig {
   airgapAttestationPath: string;
   heartbeatIntervalSeconds: number;
   heartbeatTasksPath: string;
+  initiativeEngineEnabled: boolean;
+  initiativePollSeconds: number;
+  initiativeMaxTaskRetries: number;
+  initiativeDbPath: string;
   interactionDbPath: string;
   channelConnectorConfigPath: string;
   channelConnectorSigningKey: string;
@@ -201,6 +205,9 @@ export function loadConfig(): AppConfig {
   const interactionDbPath =
     process.env.INTERACTION_DB_PATH?.trim() ||
     path.join(openclawHome, "enterprise_interactions.db");
+  const initiativeDbPath =
+    process.env.INITIATIVE_DB_PATH?.trim() ||
+    path.join(openclawHome, "enterprise_initiatives.db");
   const channelConnectorConfigPath =
     process.env.CHANNEL_CONNECTOR_CONFIG_PATH?.trim() ||
     path.join(process.cwd(), "config", "channel-connectors.v1.json");
@@ -340,6 +347,10 @@ export function loadConfig(): AppConfig {
     airgapAttestationPath,
     heartbeatIntervalSeconds: numberEnv("HEARTBEAT_INTERVAL_SECONDS", 30),
     heartbeatTasksPath,
+    initiativeEngineEnabled: booleanEnv("INITIATIVE_ENGINE_ENABLED", false),
+    initiativePollSeconds: numberEnv("INITIATIVE_POLL_SECONDS", 15),
+    initiativeMaxTaskRetries: numberEnv("INITIATIVE_MAX_TASK_RETRIES", 3),
+    initiativeDbPath,
     interactionDbPath,
     channelConnectorConfigPath,
     channelConnectorSigningKey: process.env.CHANNEL_CONNECTOR_SIGNING_KEY?.trim() || "",

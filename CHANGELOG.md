@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added Initiative Engine and Initiative Store for proactive task orchestration with retry/backoff, interruption controls, and hash-chained initiative events.
+- Added initiative control endpoints for create/list/state transitions and task/event inspection (`/_clawee/control/initiatives*`).
+- Added initiative telemetry to control status/metrics and conformance context.
+- Added initiative smoke test and wired it into `smoke:security`.
 - Added startup audit hash-chain verification with configurable fail mode (`AUDIT_STARTUP_VERIFY_MODE`).
 - Added `GET /_clawee/control/audit/verify` for runtime audit-integrity checks.
 - Added `verify-audit-chain` command in `scripts/security-tools.mjs` for offline/CI validation.

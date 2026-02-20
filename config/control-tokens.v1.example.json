@@ -28,6 +28,8 @@
         "channel.delivery.retry",
         "channel.connector.reload",
         "channel.destination.reload",
+        "initiative.read",
+        "initiative.write",
         "modality.read",
         "modality.write",
         "audit.read",

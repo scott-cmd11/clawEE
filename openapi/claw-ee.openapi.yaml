@@ -1109,12 +1109,29 @@ components:
           type: boolean
         started:
           type: boolean
+        template:
+          $ref: "#/components/schemas/InitiativeTemplateSummary"
         initiative:
           $ref: "#/components/schemas/InitiativeRecord"
         tasks:
           type: array
           items:
             $ref: "#/components/schemas/InitiativeTaskRecord"
+    InitiativeTemplateSummary:
+      type: object
+      properties:
+        template_id:
+          type: string
+        template_version:
+          type: string
+        strategy:
+          type: string
+        task_count:
+          type: integer
+        stages:
+          type: array
+          items:
+            type: string
     ModalityIngestRequest:
       oneOf:
         - $ref: "#/components/schemas/ModalityIngestTextRequest"

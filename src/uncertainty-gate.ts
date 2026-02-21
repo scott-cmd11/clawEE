@@ -2112,6 +2112,7 @@ export async function startUncertaintyGate(
         event_id: parsed.eventId || null,
         source: parsed.intake.source,
         external_ref: parsed.intake.external_ref || null,
+        template_id: parsed.template?.template_id || null,
       });
       const created = svc.createInitiative(parsed.intake);
       let started = false;
@@ -2136,6 +2137,8 @@ export async function startUncertaintyGate(
         initiative_id: created.initiative.id,
         external_ref: created.initiative.external_ref,
         event_id: parsed.eventId || null,
+        template_id: parsed.template?.template_id || null,
+        template_version: parsed.template?.template_version || null,
       });
       res.status(created.created ? 201 : 200).json({
         ok: true,
@@ -2143,6 +2146,7 @@ export async function startUncertaintyGate(
         event_id: parsed.eventId || null,
         created: created.created,
         started,
+        template: parsed.template,
         initiative: created.initiative,
         tasks: created.tasks,
       });

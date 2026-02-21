@@ -58,6 +58,6 @@ Reference architecture source:
 - Full VDI computer-use runtime (persistent desktop/session sandbox with vision-to-action loop).
 - Live synchronous meeting presence (calendar join, real-time STT diarization, low-latency TTS response loop).
 - Enterprise IAM/SSO bridge for dedicated synthetic worker identities and revocation lifecycle.
-- Event/webhook-native initiative intake adapters (Jira/Linear/PagerDuty connectors with typed task templates).
+- Expanded initiative template library beyond current `notify+triage` plans (for example, provider-native ticket transitions, owner reassignment, and escalation fanout).
 - Formal machine-checked proofs for every critical action path (current implementation is runtime/static enforcement, not theorem-proved).
 - Deep causal failure diagnosis loop for long-running autonomous plans.

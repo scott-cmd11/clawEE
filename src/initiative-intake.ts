@@ -3,6 +3,7 @@ import type {
   InitiativePriority,
   InitiativeRiskClass,
 } from "./initiative-types";
+import { compileInitiativeTemplate, type InitiativeTemplate } from "./initiative-template";
 import { sha256Hex, stableStringify } from "./utils";
 
 export type InitiativeIntakeProvider = "jira" | "linear" | "pagerduty";
@@ -12,6 +13,7 @@ export interface InitiativeIntakeResult {
   provider: InitiativeIntakeProvider;
   eventId: string;
   intake: CreateInitiativeInput | null;
+  template: InitiativeTemplate | null;
   reason?: string;
 }
 
@@ -123,6 +125,7 @@ function parseJira(payload: Record<string, unknown>): InitiativeIntakeResult {
       provider: "jira",
       eventId: "",
       intake: null,
+      template: null,
       reason: "Jira payload is missing issue key or summary.",
     };
   }
@@ -130,6 +133,20 @@ function parseJira(payload: Record<string, unknown>): InitiativeIntakeResult {
   const description = maybeJsonText(fields.description);
   const priorityName = str(asRecord(fields.priority).name);
   const priority = priorityFromText(priorityName);
+  const projectKey = str(asRecord(fields.project).key);
+  const status = str(asRecord(fields.status).name);
+  const issueLink = str(issue.self);
+  const template = compileInitiativeTemplate({
+    provider: "jira",
+    sourcePayload: payload,
+    externalRef: issueKey,
+    title: summary,
+    priority,
+    eventType: webhookEvent || "jira.event",
+    status,
+    projectKey,
+    link: issueLink,
+  });
   const eventId =
     str(payload.timestamp) ||
     str(payload.issue_event_type_name) ||
@@ -144,6 +161,7 @@ function parseJira(payload: Record<string, unknown>): InitiativeIntakeResult {
     ok: true,
     provider: "jira",
     eventId,
+    template: template.template,
     intake: {
       source: "jira",
       external_ref: issueKey,
@@ -157,11 +175,12 @@ function parseJira(payload: Record<string, unknown>): InitiativeIntakeResult {
         issue_key: issueKey,
         webhook_event: webhookEvent || null,
         issue_type: str(asRecord(fields.issuetype).name) || null,
-        project_key: str(asRecord(fields.project).key) || null,
-        status: str(asRecord(fields.status).name) || null,
+        project_key: projectKey || null,
+        status: status || null,
         payload_digest: sha256Hex(stableStringify(payload)),
+        ...template.metadata,
       },
-      tasks: [{ task_type: "noop", payload: { provider: "jira", issue_key: issueKey } }],
+      tasks: template.tasks,
     },
   };
 }
@@ -176,6 +195,7 @@ function parseLinear(payload: Record<string, unknown>): InitiativeIntakeResult {
       provider: "linear",
       eventId: "",
       intake: null,
+      template: null,
       reason: "Linear payload is missing issue identifier or title.",
     };
   }
@@ -183,10 +203,25 @@ function parseLinear(payload: Record<string, unknown>): InitiativeIntakeResult {
   const priority = linearPriorityFromNumeric(data.priority);
   const actor = asRecord(payload.actor);
   const requestedBy = str(actor.email) || str(actor.name) || "intake:linear";
+  const teamKey = str(asRecord(data.team).key);
+  const state = str(asRecord(data.state).name);
+  const issueLink = str(data.url);
+  const template = compileInitiativeTemplate({
+    provider: "linear",
+    sourcePayload: payload,
+    externalRef: issueId,
+    title,
+    priority,
+    eventType: action,
+    status: state,
+    teamKey,
+    link: issueLink,
+  });
   return {
     ok: true,
     provider: "linear",
     eventId: str(payload.id) || `${action}:${issueId}`,
+    template: template.template,
     intake: {
       source: "linear",
       external_ref: issueId,
@@ -199,11 +234,12 @@ function parseLinear(payload: Record<string, unknown>): InitiativeIntakeResult {
         provider: "linear",
         issue_id: issueId,
         action,
-        team_key: str(asRecord(data.team).key) || null,
-        state: str(asRecord(data.state).name) || null,
+        team_key: teamKey || null,
+        state: state || null,
         payload_digest: sha256Hex(stableStringify(payload)),
+        ...template.metadata,
       },
-      tasks: [{ task_type: "noop", payload: { provider: "linear", issue_id: issueId } }],
+      tasks: template.tasks,
     },
   };
 }
@@ -220,16 +256,32 @@ function parsePagerDuty(payload: Record<string, unknown>): InitiativeIntakeResul
       provider: "pagerduty",
       eventId: "",
       intake: null,
+      template: null,
       reason: "PagerDuty payload is missing incident id/number or title.",
     };
   }
   const urgency = str(incident.urgency);
   const priority = urgency.toLowerCase() === "high" ? "urgent" : "high";
   const eventType = str(event.event_type) || str(payload.event_type) || "pagerduty.event";
+  const status = str(incident.status);
+  const service = str(asRecord(incident.service).summary);
+  const incidentLink = str(incident.html_url);
+  const template = compileInitiativeTemplate({
+    provider: "pagerduty",
+    sourcePayload: payload,
+    externalRef: incidentNumber,
+    title: incidentTitle,
+    priority,
+    eventType,
+    status,
+    service,
+    link: incidentLink,
+  });
   return {
     ok: true,
     provider: "pagerduty",
     eventId: str(event.id) || `${eventType}:${incidentNumber}`,
+    template: template.template,
     intake: {
       source: "pagerduty",
       external_ref: incidentNumber,
@@ -243,13 +295,12 @@ function parsePagerDuty(payload: Record<string, unknown>): InitiativeIntakeResul
         incident_number: incidentNumber,
         event_type: eventType,
         urgency: urgency || null,
-        status: str(incident.status) || null,
-        service: str(asRecord(incident.service).summary) || null,
+        status: status || null,
+        service: service || null,
         payload_digest: sha256Hex(stableStringify(payload)),
+        ...template.metadata,
       },
-      tasks: [
-        { task_type: "noop", payload: { provider: "pagerduty", incident_number: incidentNumber } },
-      ],
+      tasks: template.tasks,
     },
   };
 }

@@ -1043,6 +1043,12 @@ async function main() {
     assert.equal(intakeCreatedJson.ok, true);
     assert.equal(intakeCreatedJson.created, true);
     assert.equal(intakeCreatedJson.provider, "jira");
+    assert.equal(typeof intakeCreatedJson.template?.template_id, "string");
+    assert.equal(intakeCreatedJson.template?.template_id, "jira.issue.notify-triage.v1");
+    assert.equal(Array.isArray(intakeCreatedJson.tasks), true);
+    assert.equal(intakeCreatedJson.tasks.length, 2);
+    assert.equal(intakeCreatedJson.tasks[0].task_type, "channel.send");
+    assert.equal(intakeCreatedJson.tasks[1].task_type, "channel.send");
     const intakeReplayRes = await fetch(
       `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
       {
@@ -1081,6 +1087,7 @@ async function main() {
     assert.equal(intakeDedupeRes.status, 200);
     const intakeDedupeJson = await intakeDedupeRes.json();
     assert.equal(intakeDedupeJson.created, false);
+    assert.equal(intakeDedupeJson.template?.template_id, "jira.issue.notify-triage.v1");
 
     await waitFor(() => delivered.length > 0, 7000);
     assert.equal(delivered[0].path, "/channel/slack");

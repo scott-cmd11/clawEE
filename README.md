@@ -129,6 +129,7 @@ Core groups:
 - Modality ingest: validated `text|vision|audio|action` payload intake
 - Initiative engine: create/list/start/pause/cancel/interrupt initiatives and inspect task/event history
 - Initiative intake adapters: Jira/Linear/PagerDuty webhook ingestion with token + HMAC + replay protection
+- Typed intake templates: provider events compile into deterministic `notify+triage` task plans (`channel.send` tasks)
 
 Full endpoint details: `openapi/claw-ee.openapi.yaml`
 
@@ -156,6 +157,16 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/_clawee/control/initi
   ]
 }'
 ```
+
+### Intake Template Behavior
+
+`POST /_clawee/intake/{provider}/webhook` now compiles provider payloads into typed `notify+triage` plans.
+
+- Jira: `jira.issue.notify-triage.v1`
+- Linear: `linear.issue.notify-triage.v1`
+- PagerDuty: `pagerduty.incident.notify-triage.v1`
+
+Each plan currently emits two deterministic `channel.send` tasks (notify, triage) and writes template metadata (`template_id`, `template_version`, `template_strategy`) into initiative metadata for auditability.
 
 ## Configuration Reference
 

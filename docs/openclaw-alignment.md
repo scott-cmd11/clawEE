@@ -15,6 +15,8 @@ Reference architecture source:
   - Claw-EE maps this to signed/tokenized initiative intake webhooks that normalize provider events into initiatives with replay protection.
 - OpenClaw runtime work-item events
   - Claw-EE maps this to dedicated adapter intake endpoints (`/_clawee/intake/openclaw/work-item`, `/_clawee/intake/openclaw/heartbeat`) with token/HMAC auth, replay protection, and initiative normalization.
+- Browser-centric virtual desk execution
+  - Claw-EE maps this to a Dockerized VDI worker (Playwright) with deny-by-default host allowlisting and audited control endpoints.
 - Built-in skills and direct host actions (`run shell`, file writes, browser automation)
   - Claw-EE maps this to policy engine block/approval gates, uncertainty scoring, and model registry checks before forwarding.
 - Workspace memory (`SOUL.md`, agent session logs under `.openclaw`)
@@ -57,7 +59,7 @@ Reference architecture source:
 
 ## Remaining roadmap (not fully solved in current MVP)
 
-- Full VDI computer-use runtime (persistent desktop/session sandbox with vision-to-action loop).
+- Full OS-level desktop control beyond browser workflows (current VDI runtime is browser-first Playwright execution).
 - Live synchronous meeting presence (calendar join, real-time STT diarization, low-latency TTS response loop).
 - Enterprise IAM/SSO bridge for dedicated synthetic worker identities and revocation lifecycle.
 - Expanded initiative template library beyond current `notify+triage` plans (for example, provider-native ticket transitions, owner reassignment, and escalation fanout).

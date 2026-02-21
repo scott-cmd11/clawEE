@@ -37,6 +37,7 @@ import { SecurityConformanceService } from "../dist/security-conformance.js";
 import { SecurityInvariantRegistry } from "../dist/security-invariants.js";
 import { startUncertaintyGate } from "../dist/uncertainty-gate.js";
 import { sha256Hex, stableStringify } from "../dist/utils.js";
+import { VdiService } from "../dist/vdi-service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,6 +141,7 @@ async function main() {
 
   const upstreamPort = await getFreePort();
   const connectorPort = await getFreePort();
+  const vdiPort = await getFreePort();
   const gatePort = await getFreePort();
 
   const upstreamServer = createServer(async (_req, _body) => {
@@ -163,9 +165,77 @@ async function main() {
     });
     return json(200, { ok: true });
   });
+  const vdiSessions = new Map();
+  const vdiArtifacts = new Map();
+  const vdiServer = createServer(async (req, bodyRaw) => {
+    const body = JSON.parse(bodyRaw || "{}");
+    const url = req.url || "/";
+    if (req.method === "POST" && url === "/session/start") {
+      const id = `vdi-${vdiSessions.size + 1}`;
+      const session = {
+        id,
+        label: body.label || "smoke-vdi",
+        status: "active",
+        started_at: new Date().toISOString(),
+        stopped_at: null,
+        current_url: body.start_url || "about:blank",
+        metadata: body.metadata || {},
+      };
+      vdiSessions.set(id, session);
+      vdiArtifacts.set(id, []);
+      return json(200, { ok: true, session });
+    }
+    if (req.method === "POST" && /^\/session\/[^/]+\/step$/.test(url)) {
+      const sessionId = url.split("/")[2];
+      const session = vdiSessions.get(sessionId);
+      if (!session) {
+        return json(404, { error: "session not found" });
+      }
+      const action = String(body.action || "").trim().toLowerCase();
+      if (action === "navigate" && body.url) {
+        session.current_url = String(body.url);
+      }
+      const result = {
+        action: action || "screenshot",
+        ok: true,
+        timestamp: new Date().toISOString(),
+        current_url: session.current_url || null,
+        screenshot_path:
+          action === "screenshot" ? path.join(tmpDir, `${sessionId}-shot.png`) : undefined,
+      };
+      if (result.screenshot_path) {
+        vdiArtifacts.get(sessionId).push(result.screenshot_path);
+      }
+      return json(200, { ok: true, result });
+    }
+    if (req.method === "POST" && /^\/session\/[^/]+\/stop$/.test(url)) {
+      const sessionId = url.split("/")[2];
+      const session = vdiSessions.get(sessionId);
+      if (!session) {
+        return json(404, { error: "session not found" });
+      }
+      session.status = "closed";
+      session.stopped_at = new Date().toISOString();
+      return json(200, { ok: true, session });
+    }
+    if (req.method === "GET" && /^\/session\/[^/]+$/.test(url)) {
+      const sessionId = url.split("/")[2];
+      const session = vdiSessions.get(sessionId);
+      if (!session) {
+        return json(404, { error: "session not found" });
+      }
+      return json(200, { ok: true, session });
+    }
+    if (req.method === "GET" && /^\/session\/[^/]+\/artifacts$/.test(url)) {
+      const sessionId = url.split("/")[2];
+      return json(200, { ok: true, artifacts: vdiArtifacts.get(sessionId) || [] });
+    }
+    return json(404, { error: "not found" });
+  });
 
   await listen(upstreamServer, upstreamPort);
   await listen(connectorServer, connectorPort);
+  await listen(vdiServer, vdiPort);
 
   const connectorConfigPath = path.join(tmpDir, "channel-connectors.v1.json");
   const destinationPolicyPath = path.join(tmpDir, "channel-destination-policy.v1.json");
@@ -313,6 +383,15 @@ async function main() {
   });
   const modalityHub = new ModalityHub(100);
   const channelHub = new ChannelHub(100);
+  const vdiService = new VdiService({
+    enabled: true,
+    workerBaseUrl: `http://127.0.0.1:${vdiPort}`,
+    authToken: "",
+    stepTimeoutMs: 5000,
+    screenshotMaxBytes: 1024 * 1024,
+    allowedHosts: ["example.com"],
+    artifactPath: tmpDir,
+  });
   const interactionStore = new InteractionStore(path.join(tmpDir, "interactions.db"));
   interactionStore.init();
   const initiativeStore = new InitiativeStore(path.join(tmpDir, "initiatives.db"));
@@ -328,6 +407,7 @@ async function main() {
     channelHub,
     interactionStore,
     ledger,
+    vdiService,
   );
   const replayNonceSeen = new Map();
   const replayEventSeen = new Map();
@@ -480,6 +560,7 @@ async function main() {
         },
       },
       initiativeEngine,
+      vdiService,
     );
 
     const ingressBody = JSON.stringify({
@@ -618,6 +699,114 @@ async function main() {
       },
     );
     assert.equal(modalityValidRes.status, 200);
+
+    const vdiStartDenied = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/start`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${readonlyToken}`,
+        },
+        body: JSON.stringify({
+          label: "smoke-session",
+          start_url: "https://example.com/dashboard",
+        }),
+      },
+    );
+    assert.equal(vdiStartDenied.status, 403);
+    const vdiStartAllowed = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/start`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({
+          label: "smoke-session",
+          start_url: "https://example.com/dashboard",
+        }),
+      },
+    );
+    assert.equal(vdiStartAllowed.status, 200);
+    const vdiStartJson = await vdiStartAllowed.json();
+    assert.equal(vdiStartJson.ok, true);
+    const vdiSessionId = String(vdiStartJson.session?.id || "");
+    assert.equal(vdiSessionId.length > 0, true);
+
+    const vdiBlockedStepRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/${vdiSessionId}/step`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({
+          action: "navigate",
+          url: "https://blocked.example/internal",
+        }),
+      },
+    );
+    assert.equal(vdiBlockedStepRes.status, 403);
+
+    const vdiStepRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/${vdiSessionId}/step`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({
+          action: "screenshot",
+          full_page: true,
+        }),
+      },
+    );
+    assert.equal(vdiStepRes.status, 200);
+    const vdiStepJson = await vdiStepRes.json();
+    assert.equal(vdiStepJson.ok, true);
+    assert.equal(vdiStepJson.result?.action, "screenshot");
+
+    const vdiSessionGetRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/${vdiSessionId}`,
+      {
+        headers: {
+          authorization: `Bearer ${controlToken}`,
+        },
+      },
+    );
+    assert.equal(vdiSessionGetRes.status, 200);
+
+    const vdiArtifactsRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/${vdiSessionId}/artifacts`,
+      {
+        headers: {
+          authorization: `Bearer ${controlToken}`,
+        },
+      },
+    );
+    assert.equal(vdiArtifactsRes.status, 200);
+    const vdiArtifactsJson = await vdiArtifactsRes.json();
+    assert.equal(Array.isArray(vdiArtifactsJson.artifacts), true);
+
+    const vdiStopRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/control/vdi/session/${vdiSessionId}/stop`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${controlToken}`,
+        },
+        body: JSON.stringify({ reason: "smoke done" }),
+      },
+    );
+    assert.equal(vdiStopRes.status, 200);
+    const vdiStopJson = await vdiStopRes.json();
+    assert.equal(vdiStopJson.ok, true);
+    assert.equal(vdiStopJson.session?.status, "closed");
 
     const oversizeIngressBody = JSON.stringify({
       source: "eng-team",
@@ -1244,6 +1433,10 @@ async function main() {
     assert.equal(Number(metricsJson.openclaw_adapter?.work_items_ingested_total) >= 1, true);
     assert.equal(Number(metricsJson.openclaw_adapter?.work_items_deduped_total) >= 1, true);
     assert.equal(typeof metricsJson.openclaw_adapter?.last_heartbeat_at, "string");
+    assert.equal(metricsJson.vdi_runtime?.enabled, true);
+    assert.equal(Number(metricsJson.vdi_runtime?.sessions_started_total) >= 1, true);
+    assert.equal(Number(metricsJson.vdi_runtime?.steps_executed_total) >= 1, true);
+    assert.equal(Number(metricsJson.vdi_runtime?.steps_blocked_total) >= 1, true);
 
     await waitFor(() => delivered.length > 0, 7000);
     assert.equal(delivered[0].path, "/channel/slack");
@@ -1518,6 +1711,7 @@ async function main() {
     ledger.close();
     await closeServer(upstreamServer);
     await closeServer(connectorServer);
+    await closeServer(vdiServer);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
@@ -1525,6 +1719,7 @@ async function main() {
     gatePort,
     upstreamPort,
     connectorPort,
+    vdiPort,
   });
 }
 

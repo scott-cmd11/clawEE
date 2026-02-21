@@ -43,6 +43,7 @@ import { RuntimeEgressGuard, RuntimeEgressPolicyError } from "./runtime-egress-g
 import { SecurityConformanceService } from "./security-conformance";
 import { SecurityInvariantRegistry } from "./security-invariants";
 import { sha256Hex, stableStringify } from "./utils";
+import type { VdiService } from "./vdi-service";
 
 export interface UncertaintyGateOptions {
   port: number;
@@ -675,6 +676,7 @@ export async function startUncertaintyGate(
     reloadCapabilityCatalog?: () => { fingerprint: string };
   },
   initiativeService?: InitiativeControlService,
+  vdiService?: VdiService,
 ): Promise<UncertaintyGateService> {
   const app = express();
   const sendAlert = async (
@@ -845,6 +847,13 @@ export async function startUncertaintyGate(
     }
     return initiativeService;
   };
+  const getVdiService = (res: express.Response): VdiService | null => {
+    if (!vdiService || !vdiService.isEnabled()) {
+      res.status(503).json({ error: "VDI runtime is not enabled." });
+      return null;
+    }
+    return vdiService;
+  };
 
   app.get("/_clawee/control/status", controlAuth("system.read"), (_req, res) => {
     const status = budgetController.getStatus();
@@ -859,6 +868,7 @@ export async function startUncertaintyGate(
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
     const initiativeStats = initiativeService ? initiativeService.getStats() : { enabled: false };
+    const vdiStats = vdiService ? vdiService.getStats() : { enabled: false };
     res.json({
       enforcement_mode: options.enforcementMode,
       node_id: options.nodeId,
@@ -898,6 +908,7 @@ export async function startUncertaintyGate(
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
       initiatives: initiativeStats,
+      vdi_runtime: vdiStats,
       initiative_intake: {
         enabled: initiativeIntakeEnabled,
         token_configured: Boolean(initiativeIntakeToken),
@@ -1443,6 +1454,7 @@ export async function startUncertaintyGate(
     const approvalPolicyState = approvalPolicy.getState();
     const replayStoreState = replayStore.getState();
     const initiativeStats = initiativeService ? initiativeService.getStats() : { enabled: false };
+    const vdiStats = vdiService ? vdiService.getStats() : { enabled: false };
     res.json({
       service: "claw-ee",
       node_id: options.nodeId,
@@ -1489,6 +1501,7 @@ export async function startUncertaintyGate(
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
       initiatives: initiativeStats,
+      vdi_runtime: vdiStats,
       initiative_intake: {
         enabled: initiativeIntakeEnabled,
         token_configured: Boolean(initiativeIntakeToken),
@@ -2080,6 +2093,165 @@ export async function startUncertaintyGate(
       { observation_id: observation.id, session_id: observation.session_id },
     );
     res.json({ ok: true, observation });
+  });
+
+  app.post("/_clawee/control/vdi/session/start", controlAuth("initiative.write"), (req, res) => {
+    void (async () => {
+      const service = getVdiService(res);
+      if (!service) {
+        return;
+      }
+      try {
+        const session = await service.startSession(req.body);
+        ledger.logAndSignAction("VDI_SESSION_STARTED", {
+          session_id: session.id,
+          label: session.label,
+          current_url: session.current_url || null,
+        });
+        res.json({ ok: true, session });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("allowlist policy")) {
+          service.countBlockedStep();
+          ledger.logAndSignAction("VDI_STEP_BLOCKED", {
+            action: "session.start",
+            reason: message,
+          });
+          res.status(403).json({ error: message });
+          return;
+        }
+        ledger.logAndSignAction("SYSTEM_ERROR", {
+          module: "uncertainty-gate",
+          stage: "vdi-session-start",
+          message,
+        });
+        res.status(500).json({ error: message });
+      }
+    })();
+  });
+
+  app.post("/_clawee/control/vdi/session/:id/step", controlAuth("initiative.write"), (req, res) => {
+    void (async () => {
+      const service = getVdiService(res);
+      if (!service) {
+        return;
+      }
+      const sessionId = String(req.params.id || "").trim();
+      if (!sessionId) {
+        res.status(400).json({ error: "VDI session id is required." });
+        return;
+      }
+      try {
+        const result = await service.executeStep(sessionId, req.body);
+        ledger.logAndSignAction("VDI_STEP_EXECUTED", {
+          session_id: sessionId,
+          action: result.action,
+          screenshot_path: result.screenshot_path || null,
+        });
+        if (result.screenshot_path) {
+          ledger.logAndSignAction("VDI_ARTIFACT_CAPTURED", {
+            session_id: sessionId,
+            action: result.action,
+            screenshot_path: result.screenshot_path,
+          });
+        }
+        res.json({ ok: true, result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("allowlist policy")) {
+          service.countBlockedStep();
+          ledger.logAndSignAction("VDI_STEP_BLOCKED", {
+            session_id: sessionId,
+            reason: message,
+          });
+          res.status(403).json({ error: message });
+          return;
+        }
+        ledger.logAndSignAction("SYSTEM_ERROR", {
+          module: "uncertainty-gate",
+          stage: "vdi-step",
+          session_id: sessionId,
+          message,
+        });
+        res.status(500).json({ error: message });
+      }
+    })();
+  });
+
+  app.post("/_clawee/control/vdi/session/:id/stop", controlAuth("initiative.write"), (req, res) => {
+    void (async () => {
+      const service = getVdiService(res);
+      if (!service) {
+        return;
+      }
+      const sessionId = String(req.params.id || "").trim();
+      if (!sessionId) {
+        res.status(400).json({ error: "VDI session id is required." });
+        return;
+      }
+      try {
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
+        const session = await service.stopSession(sessionId, reason);
+        ledger.logAndSignAction("VDI_SESSION_STOPPED", {
+          session_id: session.id,
+          status: session.status,
+          stopped_at: session.stopped_at,
+          reason: reason || null,
+        });
+        res.json({ ok: true, session });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ledger.logAndSignAction("SYSTEM_ERROR", {
+          module: "uncertainty-gate",
+          stage: "vdi-session-stop",
+          session_id: sessionId,
+          message,
+        });
+        res.status(500).json({ error: message });
+      }
+    })();
+  });
+
+  app.get("/_clawee/control/vdi/session/:id", controlAuth("initiative.read"), (req, res) => {
+    void (async () => {
+      const service = getVdiService(res);
+      if (!service) {
+        return;
+      }
+      const sessionId = String(req.params.id || "").trim();
+      if (!sessionId) {
+        res.status(400).json({ error: "VDI session id is required." });
+        return;
+      }
+      try {
+        const session = await service.getSession(sessionId);
+        res.json({ ok: true, session });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: message });
+      }
+    })();
+  });
+
+  app.get("/_clawee/control/vdi/session/:id/artifacts", controlAuth("initiative.read"), (req, res) => {
+    void (async () => {
+      const service = getVdiService(res);
+      if (!service) {
+        return;
+      }
+      const sessionId = String(req.params.id || "").trim();
+      if (!sessionId) {
+        res.status(400).json({ error: "VDI session id is required." });
+        return;
+      }
+      try {
+        const artifacts = await service.listArtifacts(sessionId);
+        res.json({ ok: true, artifacts });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: message });
+      }
+    })();
   });
 
   const openclawIntakeAuth: RequestHandler = (req, res, next) => {

@@ -101,6 +101,13 @@ export interface AppConfig {
   initiativeIntakeHmacSecret: string;
   initiativeIntakeMaxSkewSeconds: number;
   initiativeIntakeEventTtlSeconds: number;
+  vdiRuntimeEnabled: boolean;
+  vdiWorkerBaseUrl: string;
+  vdiWorkerAuthToken: string;
+  vdiStepTimeoutMs: number;
+  vdiScreenshotMaxBytes: number;
+  vdiAllowedHosts: string[];
+  vdiContainerArtifactPath: string;
   openclawIntakeEnabled: boolean;
   openclawIntakeToken: string;
   openclawIntakeHmacSecret: string;
@@ -390,6 +397,13 @@ export function loadConfig(): AppConfig {
     initiativeIntakeHmacSecret: process.env.INITIATIVE_INTAKE_HMAC_SECRET?.trim() || "",
     initiativeIntakeMaxSkewSeconds: numberEnv("INITIATIVE_INTAKE_MAX_SKEW_SECONDS", 300),
     initiativeIntakeEventTtlSeconds: numberEnv("INITIATIVE_INTAKE_EVENT_TTL_SECONDS", 86400),
+    vdiRuntimeEnabled: booleanEnv("VDI_RUNTIME_ENABLED", false),
+    vdiWorkerBaseUrl: process.env.VDI_WORKER_BASE_URL?.trim() || "http://127.0.0.1:8091",
+    vdiWorkerAuthToken: process.env.VDI_WORKER_AUTH_TOKEN?.trim() || "",
+    vdiStepTimeoutMs: numberEnv("VDI_STEP_TIMEOUT_MS", 15000),
+    vdiScreenshotMaxBytes: numberEnv("VDI_SCREENSHOT_MAX_BYTES", 1048576),
+    vdiAllowedHosts: stringListEnv("VDI_ALLOWED_HOSTS"),
+    vdiContainerArtifactPath: process.env.VDI_CONTAINER_ARTIFACT_PATH?.trim() || "",
     openclawIntakeEnabled: booleanEnv("OPENCLAW_INTAKE_ENABLED", false),
     openclawIntakeToken: process.env.OPENCLAW_INTAKE_TOKEN?.trim() || "",
     openclawIntakeHmacSecret: process.env.OPENCLAW_INTAKE_HMAC_SECRET?.trim() || "",

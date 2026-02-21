@@ -10,6 +10,7 @@ import type {
   ListInitiativeFilters,
 } from "./initiative-types";
 import type { InitiativeStore } from "./initiative-store";
+import type { VdiService } from "./vdi-service";
 
 const MAX_BACKOFF_SECONDS = 300;
 
@@ -44,6 +45,8 @@ export class InitiativeEngine implements InitiativeControlService {
   private channelHub: ChannelHub;
   private interactionStore: InteractionStore;
   private ledger: AuditLedger;
+  private vdiService: VdiService | null;
+  private vdiSessionAliases = new Map<string, string>();
   private timer: NodeJS.Timeout | null = null;
   private tickInFlight = false;
 
@@ -53,6 +56,7 @@ export class InitiativeEngine implements InitiativeControlService {
     channelHub: ChannelHub,
     interactionStore: InteractionStore,
     ledger: AuditLedger,
+    vdiService?: VdiService,
   ) {
     this.options = {
       enabled: options.enabled,
@@ -64,6 +68,7 @@ export class InitiativeEngine implements InitiativeControlService {
     this.channelHub = channelHub;
     this.interactionStore = interactionStore;
     this.ledger = ledger;
+    this.vdiService = vdiService || null;
   }
 
   isEnabled(): boolean {
@@ -272,6 +277,15 @@ export class InitiativeEngine implements InitiativeControlService {
         case "channel.send":
           this.executeChannelSendTask(initiative.id, task);
           break;
+        case "vdi.session.start":
+          await this.executeVdiSessionStartTask(initiative.id, task);
+          break;
+        case "vdi.browser.step":
+          await this.executeVdiBrowserStepTask(initiative.id, task);
+          break;
+        case "vdi.session.stop":
+          await this.executeVdiSessionStopTask(initiative.id, task);
+          break;
         default:
           throw new Error(`Unsupported initiative task type: ${task.task_type}`);
       }
@@ -345,6 +359,113 @@ export class InitiativeEngine implements InitiativeControlService {
       channel: message.channel,
       destination: message.destination,
       message_id: message.id,
+    });
+  }
+
+  private getVdiServiceOrThrow(): VdiService {
+    if (!this.vdiService || !this.vdiService.isEnabled()) {
+      throw new Error("VDI runtime is not available for initiative task execution.");
+    }
+    return this.vdiService;
+  }
+
+  private resolveSessionId(payload: Record<string, unknown>): string {
+    const directId = String(payload.session_id || "").trim();
+    if (directId) {
+      return directId;
+    }
+    const alias = String(payload.session_alias || "").trim();
+    if (alias && this.vdiSessionAliases.has(alias)) {
+      return String(this.vdiSessionAliases.get(alias) || "").trim();
+    }
+    throw new Error("VDI task payload requires session_id or resolvable session_alias.");
+  }
+
+  private async executeVdiSessionStartTask(
+    initiativeId: string,
+    task: InitiativeTaskRecord,
+  ): Promise<void> {
+    const vdi = this.getVdiServiceOrThrow();
+    const payload = task.payload || {};
+    const session = await vdi.startSession(payload);
+    const alias = String(payload.session_alias || payload.session_key || "").trim();
+    if (alias) {
+      this.vdiSessionAliases.set(alias, session.id);
+    }
+    this.store.completeTask(initiativeId, task.id, "initiative-engine", {
+      action: "vdi.session.start",
+      session_id: session.id,
+      session_alias: alias || null,
+      status: session.status,
+      current_url: session.current_url,
+    });
+    this.ledger.logAndSignAction("INITIATIVE_TASK_COMPLETED", {
+      initiative_id: initiativeId,
+      task_id: task.id,
+      task_type: task.task_type,
+      action: "vdi.session.start",
+      session_id: session.id,
+      session_alias: alias || null,
+    });
+  }
+
+  private async executeVdiBrowserStepTask(
+    initiativeId: string,
+    task: InitiativeTaskRecord,
+  ): Promise<void> {
+    const vdi = this.getVdiServiceOrThrow();
+    const payload = task.payload || {};
+    const sessionId = this.resolveSessionId(payload);
+    const stepInput =
+      payload.step && typeof payload.step === "object" && !Array.isArray(payload.step)
+        ? (payload.step as Record<string, unknown>)
+        : payload;
+    const result = await vdi.executeStep(sessionId, stepInput);
+    this.store.completeTask(initiativeId, task.id, "initiative-engine", {
+      action: "vdi.browser.step",
+      session_id: sessionId,
+      step_action: result.action,
+      screenshot_path: result.screenshot_path || null,
+      current_url: result.current_url || null,
+      text: result.text || null,
+    });
+    this.ledger.logAndSignAction("INITIATIVE_TASK_COMPLETED", {
+      initiative_id: initiativeId,
+      task_id: task.id,
+      task_type: task.task_type,
+      action: "vdi.browser.step",
+      session_id: sessionId,
+      step_action: result.action,
+      screenshot_path: result.screenshot_path || null,
+    });
+  }
+
+  private async executeVdiSessionStopTask(
+    initiativeId: string,
+    task: InitiativeTaskRecord,
+  ): Promise<void> {
+    const vdi = this.getVdiServiceOrThrow();
+    const payload = task.payload || {};
+    const sessionId = this.resolveSessionId(payload);
+    const reason = String(payload.reason || "").trim();
+    const session = await vdi.stopSession(sessionId, reason);
+    const alias = String(payload.session_alias || payload.session_key || "").trim();
+    if (alias) {
+      this.vdiSessionAliases.delete(alias);
+    }
+    this.store.completeTask(initiativeId, task.id, "initiative-engine", {
+      action: "vdi.session.stop",
+      session_id: session.id,
+      stopped_at: session.stopped_at,
+      status: session.status,
+    });
+    this.ledger.logAndSignAction("INITIATIVE_TASK_COMPLETED", {
+      initiative_id: initiativeId,
+      task_id: task.id,
+      task_type: task.task_type,
+      action: "vdi.session.stop",
+      session_id: session.id,
+      status: session.status,
     });
   }
 }

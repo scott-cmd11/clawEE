@@ -43,7 +43,7 @@ Current implementation status by modality stack:
 
 - Text + code ("brain"): implemented via gateway control, policy, approvals, and channel operations.
 - Action + tool use ("hands"): implemented as guarded execution path (risk gate, capability policy, approval, audit).
-- Vision + screen parsing ("eyes"): partial. Structured vision ingestion exists (`/_clawee/control/modality/ingest`), full VDI computer-use loop is roadmap.
+- Vision + screen parsing ("eyes"): implemented as a secure VDI browser runtime (Docker worker + Playwright) with policy-gated control endpoints.
 - Audio + meeting presence ("ears/voice"): partial. Structured audio ingestion exists (`/_clawee/control/modality/ingest`), live meeting bot/WebRTC/TTS is roadmap.
 - Proactive work queue ("initiative"): implemented. Initiatives and tasks can be created, started, paused, interrupted, and audited.
 
@@ -131,6 +131,7 @@ Core groups:
 - Initiative intake adapters: Jira/Linear/PagerDuty webhook ingestion with token + HMAC + replay protection
 - Typed intake templates: provider events compile into deterministic `notify+triage` task plans (`channel.send` tasks)
 - OpenClaw adapter intake: `/_clawee/intake/openclaw/work-item` and `/_clawee/intake/openclaw/heartbeat`
+- VDI control: `/_clawee/control/vdi/session/start|step|stop` and session artifact inspection
 
 Full endpoint details: `openapi/claw-ee.openapi.yaml`
 
@@ -216,6 +217,16 @@ Use `.env.example` as the full source of truth. High-impact groups:
 - `OPENCLAW_INTAKE_HMAC_SECRET`
 - `OPENCLAW_INTAKE_MAX_SKEW_SECONDS`
 - `OPENCLAW_INTAKE_EVENT_TTL_SECONDS`
+
+### VDI runtime (secure computer use)
+
+- `VDI_RUNTIME_ENABLED`
+- `VDI_WORKER_BASE_URL`
+- `VDI_WORKER_AUTH_TOKEN`
+- `VDI_STEP_TIMEOUT_MS`
+- `VDI_SCREENSHOT_MAX_BYTES`
+- `VDI_ALLOWED_HOSTS`
+- `VDI_CONTAINER_ARTIFACT_PATH`
 
 ### Budget and guardrails
 

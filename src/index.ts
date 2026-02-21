@@ -39,6 +39,7 @@ import { SecurityInvariantRegistry } from "./security-invariants";
 import { buildTransportAgents } from "./transport-security";
 import { startUncertaintyGate } from "./uncertainty-gate";
 import { sha256Hex, stableStringify } from "./utils";
+import { VdiService } from "./vdi-service";
 
 function printBanner(port: number, upstreamBaseUrl: string): void {
   const banner = `
@@ -227,6 +228,15 @@ async function main(): Promise<void> {
   });
   const modalityHub = new ModalityHub(2000);
   const channelHub = new ChannelHub(2000);
+  const vdiService = new VdiService({
+    enabled: config.vdiRuntimeEnabled,
+    workerBaseUrl: config.vdiWorkerBaseUrl,
+    authToken: config.vdiWorkerAuthToken,
+    stepTimeoutMs: config.vdiStepTimeoutMs,
+    screenshotMaxBytes: config.vdiScreenshotMaxBytes,
+    allowedHosts: config.vdiAllowedHosts,
+    artifactPath: config.vdiContainerArtifactPath,
+  });
   const interactionStore = new InteractionStore(config.interactionDbPath);
   interactionStore.init();
   let initiativeStore: InitiativeStore | null = null;
@@ -245,6 +255,7 @@ async function main(): Promise<void> {
       channelHub,
       interactionStore,
       ledger,
+      vdiService,
     );
     await initiativeEngine.start();
   }
@@ -403,6 +414,9 @@ async function main(): Promise<void> {
       initiative_intake_hmac_enabled: Boolean(config.initiativeIntakeHmacSecret),
       openclaw_intake_enabled: config.openclawIntakeEnabled,
       openclaw_intake_hmac_enabled: Boolean(config.openclawIntakeHmacSecret),
+      vdi_runtime_enabled: config.vdiRuntimeEnabled,
+      vdi_worker_base_url: config.vdiWorkerBaseUrl,
+      vdi_allowed_hosts: config.vdiAllowedHosts,
       node_id: config.nodeId,
       cluster_id: config.clusterId,
     }),
@@ -428,6 +442,9 @@ async function main(): Promise<void> {
       openclaw_intake_enabled: config.openclawIntakeEnabled,
       openclaw_intake_hmac_enabled: Boolean(config.openclawIntakeHmacSecret),
       openclaw_intake_event_ttl_seconds: config.openclawIntakeEventTtlSeconds,
+      vdi_runtime_enabled: config.vdiRuntimeEnabled,
+      vdi_worker_base_url: config.vdiWorkerBaseUrl,
+      vdi_allowed_hosts: config.vdiAllowedHosts,
       config_fingerprints: configFingerprints,
     },
     signingKey: config.securityConformanceSigningKey,
@@ -451,6 +468,7 @@ async function main(): Promise<void> {
     max_task_retries: config.initiativeMaxTaskRetries,
     db_path: config.initiativeDbPath,
   });
+  ledger.logAndSignAction("VDI_RUNTIME_READY", vdiService.getStats());
 
   const gate = await startUncertaintyGate(
     {
@@ -554,6 +572,7 @@ async function main(): Promise<void> {
       },
     },
     initiativeEngine || undefined,
+    vdiService,
   );
 
   await affective.start();

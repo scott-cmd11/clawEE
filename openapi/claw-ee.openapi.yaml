@@ -440,6 +440,111 @@ paths:
                 properties:
                   ok:
                     type: boolean
+  /_clawee/control/vdi/session/start:
+    post:
+      summary: Start a VDI browser session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VdiSessionStartRequest"
+      responses:
+        "200":
+          description: Session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VdiSessionResponse"
+        "503":
+          description: VDI runtime disabled
+  /_clawee/control/vdi/session/{id}/step:
+    post:
+      summary: Execute one browser step in a VDI session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VdiStepRequest"
+      responses:
+        "200":
+          description: Step executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VdiStepResponse"
+        "403":
+          description: Step blocked by VDI allowlist policy
+        "503":
+          description: VDI runtime disabled
+  /_clawee/control/vdi/session/{id}/stop:
+    post:
+      summary: Stop a VDI browser session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VdiSessionResponse"
+        "503":
+          description: VDI runtime disabled
+  /_clawee/control/vdi/session/{id}:
+    get:
+      summary: Get VDI session state
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VdiSessionResponse"
+        "503":
+          description: VDI runtime disabled
+  /_clawee/control/vdi/session/{id}/artifacts:
+    get:
+      summary: List VDI session artifacts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Artifact list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  artifacts:
+                    type: array
+                    items:
+                      type: string
+        "503":
+          description: VDI runtime disabled
   /_clawee/control/initiatives:
     get:
       summary: List initiatives
@@ -1611,6 +1716,108 @@ components:
         metadata:
           type: object
           additionalProperties: true
+    VdiSessionStartRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        start_url:
+          type: string
+        viewport:
+          type: object
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+    VdiSessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+          enum: [active, closed]
+        started_at:
+          type: string
+          format: date-time
+        stopped_at:
+          type: string
+          format: date-time
+          nullable: true
+        current_url:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+    VdiStepRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [navigate, click, type, select, wait_for, screenshot, extract_text]
+        url:
+          type: string
+        selector:
+          type: string
+        text:
+          type: string
+        value:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        timeout_ms:
+          type: integer
+        full_page:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties: true
+    VdiStepResult:
+      type: object
+      properties:
+        action:
+          type: string
+        ok:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+        current_url:
+          type: string
+          nullable: true
+        text:
+          type: string
+          nullable: true
+        screenshot_path:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+    VdiSessionResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: "#/components/schemas/VdiSessionSummary"
+    VdiStepResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        result:
+          $ref: "#/components/schemas/VdiStepResult"
     ControlStatus:
       type: object
       properties:
@@ -1639,6 +1846,9 @@ components:
           additionalProperties: true
         initiatives:
           $ref: "#/components/schemas/InitiativeStats"
+        vdi_runtime:
+          type: object
+          additionalProperties: true
         initiative_intake:
           type: object
           additionalProperties: true
@@ -1674,6 +1884,9 @@ components:
           additionalProperties: true
         initiatives:
           $ref: "#/components/schemas/InitiativeStats"
+        vdi_runtime:
+          type: object
+          additionalProperties: true
         initiative_intake:
           type: object
           additionalProperties: true

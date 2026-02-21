@@ -10,6 +10,33 @@ services:
     volumes:
       - ./config:/app/config:ro
       - claw_ee_openclaw_home:/root/.openclaw
+    environment:
+      - VDI_RUNTIME_ENABLED=${VDI_RUNTIME_ENABLED:-false}
+      - VDI_WORKER_BASE_URL=http://vdi-worker:8091
+      - VDI_WORKER_AUTH_TOKEN=${VDI_WORKER_AUTH_TOKEN:-}
+      - VDI_STEP_TIMEOUT_MS=${VDI_STEP_TIMEOUT_MS:-15000}
+      - VDI_SCREENSHOT_MAX_BYTES=${VDI_SCREENSHOT_MAX_BYTES:-1048576}
+      - VDI_ALLOWED_HOSTS=${VDI_ALLOWED_HOSTS:-}
+      - VDI_CONTAINER_ARTIFACT_PATH=/data/vdi-artifacts
+    depends_on:
+      - vdi-worker
+
+  vdi-worker:
+    build: ./workers/vdi
+    container_name: claw-ee-vdi-worker
+    restart: unless-stopped
+    environment:
+      - PORT=8091
+      - VDI_WORKER_AUTH_TOKEN=${VDI_WORKER_AUTH_TOKEN:-}
+      - VDI_STEP_TIMEOUT_MS=${VDI_STEP_TIMEOUT_MS:-15000}
+      - VDI_SCREENSHOT_MAX_BYTES=${VDI_SCREENSHOT_MAX_BYTES:-1048576}
+      - VDI_ALLOWED_HOSTS=${VDI_ALLOWED_HOSTS:-}
+      - VDI_CONTAINER_ARTIFACT_PATH=/data/vdi-artifacts
+    volumes:
+      - claw_ee_vdi_artifacts:/data/vdi-artifacts
+    ports:
+      - "8091:8091"
 
 volumes:
   claw_ee_openclaw_home:
+  claw_ee_vdi_artifacts:

@@ -106,6 +106,8 @@ if (!fs.existsSync(gatePath)) {
     "app.post(\"/_clawee/control/security/conformance/export\"",
     "app.post(\"/_clawee/control/security/conformance/verify\"",
     "app.post(\"/_clawee/intake/:provider/webhook\"",
+    "app.post(\"/_clawee/intake/openclaw/work-item\"",
+    "parseOpenClawWorkItem(",
     "verifyIntakeHmac(",
     "__claweeSecurityDecisionId",
     "invariantCheck({",

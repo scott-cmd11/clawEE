@@ -13,6 +13,7 @@
 - Added key-rotation runbook for signed catalogs and attestation/conformance signing surfaces.
 - Added security-hardened initiative intake adapters for Jira/Linear/PagerDuty webhook ingestion with token/HMAC auth and replay protection.
 - Added typed provider intake template compiler (`notify+triage`) so Jira/Linear/PagerDuty events produce deterministic `channel.send` task plans with template metadata.
+- Added OpenClaw HTTP adapter intake endpoints for work-items and heartbeat telemetry with dedicated token/HMAC auth, replay controls, and initiative normalization.
 - Added production validation harness (`scripts/production-validation.mjs`) with quick/staging/soak profiles and JSON evidence reports.
 - Added production validation runbook and npm commands (`validate:production*`) for release gating.
 - Added startup audit hash-chain verification with configurable fail mode (`AUDIT_STARTUP_VERIFY_MODE`).

@@ -130,6 +130,7 @@ Core groups:
 - Initiative engine: create/list/start/pause/cancel/interrupt initiatives and inspect task/event history
 - Initiative intake adapters: Jira/Linear/PagerDuty webhook ingestion with token + HMAC + replay protection
 - Typed intake templates: provider events compile into deterministic `notify+triage` task plans (`channel.send` tasks)
+- OpenClaw adapter intake: `/_clawee/intake/openclaw/work-item` and `/_clawee/intake/openclaw/heartbeat`
 
 Full endpoint details: `openapi/claw-ee.openapi.yaml`
 
@@ -168,6 +169,17 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/_clawee/control/initi
 
 Each plan currently emits two deterministic `channel.send` tasks (notify, triage) and writes template metadata (`template_id`, `template_version`, `template_strategy`) into initiative metadata for auditability.
 
+### OpenClaw Adapter Behavior
+
+`POST /_clawee/intake/openclaw/work-item` ingests OpenClaw work events and normalizes them into Claw-EE initiatives with deterministic template plans:
+
+- `openclaw.task.notify-execute.v1`
+- `openclaw.incident.interrupt-triage.v1`
+- `openclaw.message.respond.v1`
+- `openclaw.order.execute.v1`
+
+`POST /_clawee/intake/openclaw/heartbeat` ingests liveness telemetry for status/metrics (`openclaw_adapter.last_heartbeat_at`).
+
 ## Configuration Reference
 
 Use `.env.example` as the full source of truth. High-impact groups:
@@ -199,6 +211,11 @@ Use `.env.example` as the full source of truth. High-impact groups:
 - `INITIATIVE_INTAKE_HMAC_SECRET`
 - `INITIATIVE_INTAKE_MAX_SKEW_SECONDS`
 - `INITIATIVE_INTAKE_EVENT_TTL_SECONDS`
+- `OPENCLAW_INTAKE_ENABLED`
+- `OPENCLAW_INTAKE_TOKEN`
+- `OPENCLAW_INTAKE_HMAC_SECRET`
+- `OPENCLAW_INTAKE_MAX_SKEW_SECONDS`
+- `OPENCLAW_INTAKE_EVENT_TTL_SECONDS`
 
 ### Budget and guardrails
 

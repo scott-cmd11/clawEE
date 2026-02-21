@@ -134,6 +134,8 @@ async function main() {
   const hmacSecret = "channel-hmac-secret";
   const initiativeIntakeToken = "initiative-intake-secret";
   const initiativeIntakeHmacSecret = "initiative-intake-hmac-secret";
+  const openclawIntakeToken = "openclaw-intake-secret";
+  const openclawIntakeHmacSecret = "openclaw-intake-hmac-secret";
   const nowSec = Math.floor(Date.now() / 1000);
 
   const upstreamPort = await getFreePort();
@@ -421,6 +423,11 @@ async function main() {
         initiativeIntakeHmacSecret,
         initiativeIntakeMaxSkewSeconds: 120,
         initiativeIntakeEventTtlSeconds: 86400,
+        openclawIntakeEnabled: true,
+        openclawIntakeToken,
+        openclawIntakeHmacSecret,
+        openclawIntakeMaxSkewSeconds: 120,
+        openclawIntakeEventTtlSeconds: 86400,
         modalityTextMaxPayloadBytes: 512,
         modalityVisionMaxPayloadBytes: 1024 * 1024,
         modalityAudioMaxPayloadBytes: 1024 * 1024,
@@ -1088,6 +1095,155 @@ async function main() {
     const intakeDedupeJson = await intakeDedupeRes.json();
     assert.equal(intakeDedupeJson.created, false);
     assert.equal(intakeDedupeJson.template?.template_id, "jira.issue.notify-triage.v1");
+
+    const openclawWorkItemPayload = JSON.stringify({
+      event_id: "ocw-evt-1",
+      agent_id: "openclaw-dev-1",
+      work_type: "task_assigned",
+      source_ref: "OC-321",
+      title: "Prepare release notes",
+      description: "Compile and post release notes draft.",
+      channel: "slack",
+      destination: "openclaw-ops",
+      metadata: { origin: "openclaw-daemon" },
+    });
+    const openclawUnauthorizedRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/work-item`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: openclawWorkItemPayload,
+      },
+    );
+    assert.equal(openclawUnauthorizedRes.status, 401);
+    const openclawTimestamp = String(Math.floor(Date.now() / 1000));
+    const openclawSignature = intakeSignature(
+      openclawIntakeHmacSecret,
+      openclawWorkItemPayload,
+      openclawTimestamp,
+    );
+    const openclawBadSignatureRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/work-item`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openclaw-token": openclawIntakeToken,
+          "x-openclaw-timestamp": openclawTimestamp,
+          "x-openclaw-signature": "sha256=bad",
+        },
+        body: openclawWorkItemPayload,
+      },
+    );
+    assert.equal(openclawBadSignatureRes.status, 401);
+    const openclawCreatedRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/work-item`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openclaw-token": openclawIntakeToken,
+          "x-openclaw-event-id": "ocw-evt-1",
+          "x-openclaw-timestamp": openclawTimestamp,
+          "x-openclaw-signature": openclawSignature,
+        },
+        body: openclawWorkItemPayload,
+      },
+    );
+    assert.equal(openclawCreatedRes.status, 201);
+    const openclawCreatedJson = await openclawCreatedRes.json();
+    assert.equal(openclawCreatedJson.ok, true);
+    assert.equal(openclawCreatedJson.provider, "openclaw");
+    assert.equal(openclawCreatedJson.created, true);
+    assert.equal(openclawCreatedJson.normalization?.template_id, "openclaw.task.notify-execute.v1");
+    assert.equal(Array.isArray(openclawCreatedJson.tasks), true);
+    assert.equal(openclawCreatedJson.tasks.length, 2);
+    const openclawReplayRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/work-item`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openclaw-token": openclawIntakeToken,
+          "x-openclaw-event-id": "ocw-evt-1",
+          "x-openclaw-timestamp": openclawTimestamp,
+          "x-openclaw-signature": openclawSignature,
+        },
+        body: openclawWorkItemPayload,
+      },
+    );
+    assert.equal(openclawReplayRes.status, 409);
+    const openclawDedupeTimestamp = String(Math.floor(Date.now() / 1000) + 1);
+    const openclawDedupeSignature = intakeSignature(
+      openclawIntakeHmacSecret,
+      openclawWorkItemPayload,
+      openclawDedupeTimestamp,
+    );
+    const openclawDedupeRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/work-item`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openclaw-token": openclawIntakeToken,
+          "x-openclaw-event-id": "ocw-evt-2",
+          "x-openclaw-timestamp": openclawDedupeTimestamp,
+          "x-openclaw-signature": openclawDedupeSignature,
+        },
+        body: openclawWorkItemPayload,
+      },
+    );
+    assert.equal(openclawDedupeRes.status, 200);
+    const openclawDedupeJson = await openclawDedupeRes.json();
+    assert.equal(openclawDedupeJson.created, false);
+    assert.equal(openclawDedupeJson.normalization?.template_id, "openclaw.task.notify-execute.v1");
+    const openclawHeartbeatPayload = JSON.stringify({
+      event_id: "och-evt-1",
+      agent_id: "openclaw-dev-1",
+      status: "online",
+      queue_depth: 3,
+      active_task_id: "task-1",
+      timestamp: new Date().toISOString(),
+      metadata: { host: "oc-node-1" },
+    });
+    const openclawHeartbeatTs = String(Math.floor(Date.now() / 1000) + 2);
+    const openclawHeartbeatSig = intakeSignature(
+      openclawIntakeHmacSecret,
+      openclawHeartbeatPayload,
+      openclawHeartbeatTs,
+    );
+    const openclawHeartbeatRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/openclaw/heartbeat`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openclaw-token": openclawIntakeToken,
+          "x-openclaw-event-id": "och-evt-1",
+          "x-openclaw-timestamp": openclawHeartbeatTs,
+          "x-openclaw-signature": openclawHeartbeatSig,
+        },
+        body: openclawHeartbeatPayload,
+      },
+    );
+    assert.equal(openclawHeartbeatRes.status, 200);
+    const openclawHeartbeatJson = await openclawHeartbeatRes.json();
+    assert.equal(openclawHeartbeatJson.ok, true);
+    assert.equal(openclawHeartbeatJson.provider, "openclaw");
+    assert.equal(openclawHeartbeatJson.heartbeat?.agent_id, "openclaw-dev-1");
+    const metricsRes = await fetch(`http://127.0.0.1:${gatePort}/_clawee/control/metrics`, {
+      headers: {
+        authorization: `Bearer ${controlToken}`,
+      },
+    });
+    assert.equal(metricsRes.status, 200);
+    const metricsJson = await metricsRes.json();
+    assert.equal(metricsJson.openclaw_adapter?.enabled, true);
+    assert.equal(Number(metricsJson.openclaw_adapter?.work_items_ingested_total) >= 1, true);
+    assert.equal(Number(metricsJson.openclaw_adapter?.work_items_deduped_total) >= 1, true);
+    assert.equal(typeof metricsJson.openclaw_adapter?.last_heartbeat_at, "string");
 
     await waitFor(() => delivered.length > 0, 7000);
     assert.equal(delivered[0].path, "/channel/slack");

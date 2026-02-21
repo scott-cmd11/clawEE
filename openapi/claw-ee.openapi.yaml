@@ -788,6 +788,94 @@ paths:
           description: Replay detected
         "503":
           description: Initiative engine disabled
+  /_clawee/intake/openclaw/work-item:
+    post:
+      summary: Ingest OpenClaw work-item and create/start initiative
+      security:
+        - openclawTokenHeader: []
+      parameters:
+        - name: x-openclaw-signature
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-openclaw-timestamp
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-openclaw-event-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenClawWorkItemRequest"
+      responses:
+        "200":
+          description: Initiative deduped/existing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawWorkItemResponse"
+        "201":
+          description: Initiative created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawWorkItemResponse"
+        "400":
+          description: Invalid OpenClaw payload
+        "401":
+          description: OpenClaw auth/signature failed
+        "409":
+          description: Replay detected
+        "503":
+          description: Initiative engine disabled
+  /_clawee/intake/openclaw/heartbeat:
+    post:
+      summary: Ingest OpenClaw heartbeat telemetry
+      security:
+        - openclawTokenHeader: []
+      parameters:
+        - name: x-openclaw-signature
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-openclaw-timestamp
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-openclaw-event-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenClawHeartbeatRequest"
+      responses:
+        "200":
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawHeartbeatResponse"
+        "400":
+          description: Invalid heartbeat payload
+        "401":
+          description: OpenClaw auth/signature failed
+        "409":
+          description: Replay detected
   /_clawee/channel/{channel}/inbound:
     post:
       summary: Ingest inbound channel event (connector)
@@ -859,6 +947,10 @@ components:
       type: apiKey
       in: header
       name: x-intake-token
+    openclawTokenHeader:
+      type: apiKey
+      in: header
+      name: x-openclaw-token
   parameters:
     ApprovalId:
       name: id
@@ -1132,6 +1224,105 @@ components:
           type: array
           items:
             type: string
+    OpenClawWorkItemRequest:
+      type: object
+      required: [event_id, agent_id, work_type, title]
+      properties:
+        event_id:
+          type: string
+        agent_id:
+          type: string
+        work_type:
+          type: string
+          enum: [task_assigned, incident_interrupt, message_request, manual_order]
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        risk_class:
+          type: string
+          enum: [low, medium, high, critical]
+        source_ref:
+          type: string
+        channel:
+          type: string
+          enum: [slack, teams, discord, email, webhook]
+        destination:
+          type: string
+        text:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    OpenClawWorkItemResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        provider:
+          type: string
+          enum: [openclaw]
+        event_id:
+          type: string
+          nullable: true
+        created:
+          type: boolean
+        started:
+          type: boolean
+        adapter:
+          type: object
+          additionalProperties: true
+        normalization:
+          type: object
+          additionalProperties: true
+        template:
+          $ref: "#/components/schemas/InitiativeTemplateSummary"
+        initiative:
+          $ref: "#/components/schemas/InitiativeRecord"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/InitiativeTaskRecord"
+    OpenClawHeartbeatRequest:
+      type: object
+      required: [agent_id]
+      properties:
+        event_id:
+          type: string
+        agent_id:
+          type: string
+        status:
+          type: string
+        active_task_id:
+          type: string
+        queue_depth:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    OpenClawHeartbeatResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        provider:
+          type: string
+          enum: [openclaw]
+        event_id:
+          type: string
+          nullable: true
+        adapter:
+          type: object
+          additionalProperties: true
+        heartbeat:
+          type: object
+          additionalProperties: true
     ModalityIngestRequest:
       oneOf:
         - $ref: "#/components/schemas/ModalityIngestTextRequest"
@@ -1451,6 +1642,9 @@ components:
         initiative_intake:
           type: object
           additionalProperties: true
+        openclaw_adapter:
+          type: object
+          additionalProperties: true
         config_fingerprints:
           type: object
           additionalProperties:
@@ -1481,6 +1675,9 @@ components:
         initiatives:
           $ref: "#/components/schemas/InitiativeStats"
         initiative_intake:
+          type: object
+          additionalProperties: true
+        openclaw_adapter:
           type: object
           additionalProperties: true
         process:

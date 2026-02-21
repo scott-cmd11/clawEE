@@ -32,6 +32,7 @@ import type { RiskEvaluator, ToolIntent } from "./inference-provider";
 import { InteractionStore } from "./interaction-store";
 import { parseInitiativeIntake, parseInitiativeProvider } from "./initiative-intake";
 import type { InitiativeControlService } from "./initiative-engine";
+import { parseOpenClawHeartbeat, parseOpenClawWorkItem } from "./openclaw-intake";
 import { validateModalityPayload, type ModalityPayloadValidationOptions } from "./modality-validation";
 import { ModelRegistry, type ModelModality } from "./model-registry";
 import { ModalityHub, type ModalityType } from "./modality-hub";
@@ -66,6 +67,11 @@ export interface UncertaintyGateOptions {
   initiativeIntakeHmacSecret?: string;
   initiativeIntakeMaxSkewSeconds?: number;
   initiativeIntakeEventTtlSeconds?: number;
+  openclawIntakeEnabled?: boolean;
+  openclawIntakeToken?: string;
+  openclawIntakeHmacSecret?: string;
+  openclawIntakeMaxSkewSeconds?: number;
+  openclawIntakeEventTtlSeconds?: number;
   modalityTextMaxPayloadBytes: number;
   modalityVisionMaxPayloadBytes: number;
   modalityAudioMaxPayloadBytes: number;
@@ -379,6 +385,12 @@ function intakeAuthorized(req: Request, token: string): boolean {
   return authHeader === token || tokenHeader === token;
 }
 
+function openclawAuthorized(req: Request, token: string): boolean {
+  const authHeader = parseBearerToken(req.header("authorization"));
+  const tokenHeader = req.header("x-openclaw-token")?.trim() || "";
+  return authHeader === token || tokenHeader === token;
+}
+
 interface ChannelHmacResult {
   ok: boolean;
   reason: string;
@@ -487,6 +499,54 @@ function verifyIntakeHmac(req: Request, secret: string, maxSkewSeconds: number):
   };
 }
 
+function verifyOpenclawHmac(req: Request, secret: string, maxSkewSeconds: number): IntakeHmacResult {
+  const normalizedSecret = secret.trim();
+  if (!normalizedSecret) {
+    return { ok: true, reason: "hmac-disabled" };
+  }
+  const signatureRaw = (req.header("x-openclaw-signature") || "").trim();
+  if (!signatureRaw) {
+    return { ok: false, reason: "missing-signature" };
+  }
+
+  const providedHex = signatureRaw.replace(/^sha256=/i, "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(providedHex)) {
+    return { ok: false, reason: "invalid-signature-format" };
+  }
+
+  const rawBody = (req as Request & { rawBody?: string }).rawBody || "";
+  const timestamp = (req.header("x-openclaw-timestamp") || "").trim();
+  if (!timestamp.length) {
+    return { ok: false, reason: "missing-timestamp" };
+  }
+  const payload = `${timestamp}.${rawBody}`;
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) {
+    return { ok: false, reason: "invalid-timestamp" };
+  }
+  const timestampMs = ts > 1e12 ? ts : ts * 1000;
+  const skewMs = Math.abs(Date.now() - timestampMs);
+  if (skewMs > Math.max(1, maxSkewSeconds) * 1000) {
+    return { ok: false, reason: "timestamp-skew-exceeded" };
+  }
+
+  const expectedHex = crypto.createHmac("sha256", normalizedSecret).update(payload).digest("hex");
+  const provided = Buffer.from(providedHex, "hex");
+  const expected = Buffer.from(expectedHex, "hex");
+  if (provided.length !== expected.length) {
+    return { ok: false, reason: "signature-length-mismatch" };
+  }
+  if (!crypto.timingSafeEqual(provided, expected)) {
+    return { ok: false, reason: "signature-mismatch" };
+  }
+  return {
+    ok: true,
+    reason: "ok",
+    nonceMaterial: `${req.path}|${timestamp}|${providedHex}`,
+  };
+}
+
 function parseChannelKind(raw: string): ChannelKind | null {
   const value = raw.trim().toLowerCase();
   if (value === "slack" || value === "teams" || value === "discord" || value === "email" || value === "webhook") {
@@ -523,6 +583,27 @@ function extractInitiativeIntakeEventKey(req: Request, providerEventId: string):
   const normalizedProviderEventId = providerEventId.trim().toLowerCase();
   if (normalizedProviderEventId) {
     return `${provider}|${normalizedProviderEventId}`;
+  }
+  return "";
+}
+
+function extractOpenclawEventKey(req: Request, providerEventId: string): string {
+  const headerEventId = (req.header("x-openclaw-event-id") || req.header("x-event-id") || "")
+    .trim()
+    .toLowerCase();
+  if (headerEventId) {
+    return `openclaw|${headerEventId}`;
+  }
+  const normalizedProviderEventId = providerEventId.trim().toLowerCase();
+  if (normalizedProviderEventId) {
+    return `openclaw|${normalizedProviderEventId}`;
+  }
+  if (req.body && typeof req.body === "object") {
+    const record = req.body as Record<string, unknown>;
+    const bodyEventId = String(record.event_id || record.id || "").trim().toLowerCase();
+    if (bodyEventId) {
+      return `openclaw|${bodyEventId}`;
+    }
   }
   return "";
 }
@@ -698,6 +779,23 @@ export async function startUncertaintyGate(
     60,
     Math.floor(Number(options.initiativeIntakeEventTtlSeconds || 86400)),
   );
+  const openclawIntakeEnabled =
+    options.openclawIntakeEnabled === true &&
+    Boolean(options.openclawIntakeToken && options.openclawIntakeToken.trim());
+  const openclawIntakeToken = String(options.openclawIntakeToken || "").trim();
+  const openclawIntakeHmacSecret = String(options.openclawIntakeHmacSecret || "").trim();
+  const openclawIntakeMaxSkewSeconds = Math.max(
+    1,
+    Math.floor(Number(options.openclawIntakeMaxSkewSeconds || 300)),
+  );
+  const openclawIntakeEventTtlSeconds = Math.max(
+    60,
+    Math.floor(Number(options.openclawIntakeEventTtlSeconds || 86400)),
+  );
+  let openclawWorkItemsIngestedTotal = 0;
+  let openclawWorkItemsReplayedTotal = 0;
+  let openclawWorkItemsDedupedTotal = 0;
+  let openclawLastHeartbeatAt: string | null = null;
 
   const controlAuth =
     (permission: ControlPermission): RequestHandler =>
@@ -806,6 +904,17 @@ export async function startUncertaintyGate(
         hmac_enabled: Boolean(initiativeIntakeHmacSecret),
         max_skew_seconds: initiativeIntakeMaxSkewSeconds,
         event_ttl_seconds: initiativeIntakeEventTtlSeconds,
+      },
+      openclaw_adapter: {
+        enabled: openclawIntakeEnabled,
+        token_configured: Boolean(openclawIntakeToken),
+        hmac_enabled: Boolean(openclawIntakeHmacSecret),
+        max_skew_seconds: openclawIntakeMaxSkewSeconds,
+        event_ttl_seconds: openclawIntakeEventTtlSeconds,
+        work_items_ingested_total: openclawWorkItemsIngestedTotal,
+        work_items_replayed_total: openclawWorkItemsReplayedTotal,
+        work_items_deduped_total: openclawWorkItemsDedupedTotal,
+        last_heartbeat_at: openclawLastHeartbeatAt,
       },
     });
   });
@@ -1387,6 +1496,17 @@ export async function startUncertaintyGate(
         max_skew_seconds: initiativeIntakeMaxSkewSeconds,
         event_ttl_seconds: initiativeIntakeEventTtlSeconds,
       },
+      openclaw_adapter: {
+        enabled: openclawIntakeEnabled,
+        token_configured: Boolean(openclawIntakeToken),
+        hmac_enabled: Boolean(openclawIntakeHmacSecret),
+        max_skew_seconds: openclawIntakeMaxSkewSeconds,
+        event_ttl_seconds: openclawIntakeEventTtlSeconds,
+        work_items_ingested_total: openclawWorkItemsIngestedTotal,
+        work_items_replayed_total: openclawWorkItemsReplayedTotal,
+        work_items_deduped_total: openclawWorkItemsDedupedTotal,
+        last_heartbeat_at: openclawLastHeartbeatAt,
+      },
       process: {
         pid: process.pid,
         memory_rss: process.memoryUsage().rss,
@@ -1960,6 +2080,277 @@ export async function startUncertaintyGate(
       { observation_id: observation.id, session_id: observation.session_id },
     );
     res.json({ ok: true, observation });
+  });
+
+  const openclawIntakeAuth: RequestHandler = (req, res, next) => {
+    void (async () => {
+      if (!openclawIntakeEnabled) {
+        res.status(404).json({ error: "OpenClaw intake adapter is not enabled." });
+        return;
+      }
+      const routeType = req.path.includes("/heartbeat") ? "heartbeat" : "work-item";
+      const rateKey = `openclaw-intake:${req.ip || "unknown"}:${routeType}`;
+      const rateDecision = channelLimiter.check(rateKey);
+      if (!rateDecision.allowed) {
+        ledger.logAndSignAction("RATE_LIMIT_BLOCKED", {
+          path: req.originalUrl,
+          method: req.method,
+          scope: "openclaw-intake",
+          route_type: routeType,
+          retry_after_seconds: rateDecision.retryAfterSeconds,
+        });
+        res.setHeader("retry-after", String(rateDecision.retryAfterSeconds));
+        res.status(429).json({ error: "OpenClaw intake rate limit exceeded." });
+        return;
+      }
+      if (!openclawAuthorized(req, openclawIntakeToken)) {
+        invariantCheck({
+          id: "INV-008-INGRESS-AUTH-GATE",
+          passed: true,
+          reason: "openclaw intake unauthorized",
+          context: {
+            path: req.originalUrl,
+            method: req.method,
+            route_type: routeType,
+            stage: "auth",
+          },
+        });
+        ledger.logAndSignAction("CONTROL_ACCESS_DENIED", {
+          path: req.originalUrl,
+          method: req.method,
+          route_type: routeType,
+          openclaw_intake: true,
+        });
+        res.status(401).json({ error: "Unauthorized OpenClaw intake request." });
+        return;
+      }
+      const signatureCheck = verifyOpenclawHmac(
+        req,
+        openclawIntakeHmacSecret,
+        openclawIntakeMaxSkewSeconds,
+      );
+      if (!signatureCheck.ok) {
+        invariantCheck({
+          id: "INV-008-INGRESS-AUTH-GATE",
+          passed: true,
+          reason: signatureCheck.reason,
+          context: {
+            path: req.originalUrl,
+            method: req.method,
+            route_type: routeType,
+            stage: "signature",
+          },
+        });
+        ledger.logAndSignAction("OPENCLAW_INTAKE_SIGNATURE_DENIED", {
+          path: req.originalUrl,
+          method: req.method,
+          route_type: routeType,
+          reason: signatureCheck.reason,
+        });
+        res.status(401).json({ error: "Invalid OpenClaw intake signature." });
+        return;
+      }
+      if (signatureCheck.nonceMaterial) {
+        const nonceHash = sha256Hex(signatureCheck.nonceMaterial);
+        const accepted = await replayStore.registerNonce(nonceHash, openclawIntakeMaxSkewSeconds);
+        if (!accepted) {
+          invariantCheck({
+            id: "INV-008-INGRESS-AUTH-GATE",
+            passed: true,
+            reason: "openclaw intake nonce replay blocked",
+            context: {
+              path: req.originalUrl,
+              method: req.method,
+              route_type: routeType,
+              stage: "nonce-replay",
+            },
+          });
+          if (routeType === "work-item") {
+            openclawWorkItemsReplayedTotal += 1;
+          }
+          ledger.logAndSignAction("OPENCLAW_INTAKE_REPLAY_BLOCKED", {
+            path: req.originalUrl,
+            method: req.method,
+            route_type: routeType,
+            stage: "nonce",
+          });
+          res.status(409).json({ error: "Replay detected for OpenClaw intake request." });
+          return;
+        }
+      }
+      next();
+    })().catch((error) => {
+      ledger.logAndSignAction("SYSTEM_ERROR", {
+        module: "uncertainty-gate",
+        stage: "openclaw-intake-auth",
+        path: req.originalUrl,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "OpenClaw intake auth failed." });
+    });
+  };
+
+  app.post("/_clawee/intake/openclaw/work-item", openclawIntakeAuth, (req, res) => {
+    void (async () => {
+      const svc = getInitiativeService(res);
+      if (!svc) {
+        return;
+      }
+      const parsed = parseOpenClawWorkItem(req.body);
+      if (!parsed.ok || !parsed.intake || !parsed.template) {
+        ledger.logAndSignAction("OPENCLAW_INTAKE_SKIPPED", {
+          reason: parsed.reason || "invalid payload",
+          path: req.originalUrl,
+        });
+        res.status(400).json({
+          error: "Invalid OpenClaw work-item payload.",
+          reason: parsed.reason || "unknown",
+        });
+        return;
+      }
+      const eventKey = extractOpenclawEventKey(req, parsed.eventId);
+      if (eventKey) {
+        const eventKeyHash = sha256Hex(eventKey);
+        const accepted = await replayStore.registerEventKey(eventKeyHash, openclawIntakeEventTtlSeconds);
+        if (!accepted) {
+          openclawWorkItemsReplayedTotal += 1;
+          ledger.logAndSignAction("OPENCLAW_INTAKE_REPLAY_BLOCKED", {
+            path: req.originalUrl,
+            method: req.method,
+            stage: "event-id",
+            event_key: eventKey,
+          });
+          res.status(409).json({ error: "Replay detected for OpenClaw intake event id." });
+          return;
+        }
+      }
+      ledger.logAndSignAction("OPENCLAW_INTAKE_RECEIVED", {
+        event_id: parsed.eventId || null,
+        source: parsed.intake.source,
+        external_ref: parsed.intake.external_ref || null,
+        dedupe_key: parsed.dedupeKey,
+        template_id: parsed.template.template_id,
+      });
+      const created = svc.createInitiative(parsed.intake);
+      let started = false;
+      if (created.created) {
+        try {
+          svc.startInitiative(created.initiative.id, "intake:openclaw");
+          started = true;
+        } catch (error) {
+          ledger.logAndSignAction("SYSTEM_ERROR", {
+            module: "uncertainty-gate",
+            stage: "openclaw-intake-start",
+            initiative_id: created.initiative.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        openclawWorkItemsDedupedTotal += 1;
+      }
+      openclawWorkItemsIngestedTotal += 1;
+      ledger.logAndSignAction("OPENCLAW_INTAKE_CREATED", {
+        created: created.created,
+        started,
+        initiative_id: created.initiative.id,
+        external_ref: created.initiative.external_ref,
+        event_id: parsed.eventId || null,
+        dedupe_key: parsed.dedupeKey,
+        template_id: parsed.template.template_id,
+        template_version: parsed.template.template_version,
+      });
+      res.status(created.created ? 201 : 200).json({
+        ok: true,
+        provider: "openclaw",
+        event_id: parsed.eventId || null,
+        created: created.created,
+        started,
+        adapter: {
+          provider: "openclaw",
+          version: "1.0.0",
+          mode: "http-gateway",
+        },
+        normalization: {
+          template_id: parsed.template.template_id,
+          template_version: parsed.template.template_version,
+          dedupe_key: parsed.dedupeKey,
+          created: created.created,
+          started,
+        },
+        template: parsed.template,
+        initiative: created.initiative,
+        tasks: created.tasks,
+      });
+    })().catch((error) => {
+      ledger.logAndSignAction("SYSTEM_ERROR", {
+        module: "uncertainty-gate",
+        stage: "openclaw-intake-work-item",
+        path: req.originalUrl,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "OpenClaw work-item intake failed." });
+    });
+  });
+
+  app.post("/_clawee/intake/openclaw/heartbeat", openclawIntakeAuth, (req, res) => {
+    void (async () => {
+      const parsed = parseOpenClawHeartbeat(req.body);
+      if (!parsed.ok || !parsed.heartbeat) {
+        ledger.logAndSignAction("OPENCLAW_INTAKE_SKIPPED", {
+          reason: parsed.reason || "invalid heartbeat payload",
+          path: req.originalUrl,
+          stage: "heartbeat-parse",
+        });
+        res.status(400).json({
+          error: "Invalid OpenClaw heartbeat payload.",
+          reason: parsed.reason || "unknown",
+        });
+        return;
+      }
+      const eventKey = extractOpenclawEventKey(req, parsed.eventId);
+      if (eventKey) {
+        const eventKeyHash = sha256Hex(eventKey);
+        const accepted = await replayStore.registerEventKey(eventKeyHash, openclawIntakeEventTtlSeconds);
+        if (!accepted) {
+          ledger.logAndSignAction("OPENCLAW_INTAKE_REPLAY_BLOCKED", {
+            path: req.originalUrl,
+            method: req.method,
+            stage: "heartbeat-event-id",
+            event_key: eventKey,
+          });
+          res.status(409).json({ error: "Replay detected for OpenClaw heartbeat event id." });
+          return;
+        }
+      }
+      openclawLastHeartbeatAt = parsed.heartbeat.timestamp || new Date().toISOString();
+      ledger.logAndSignAction("OPENCLAW_HEARTBEAT_RECEIVED", {
+        event_id: parsed.eventId || null,
+        agent_id: parsed.heartbeat.agent_id,
+        status: parsed.heartbeat.status,
+        active_task_id: parsed.heartbeat.active_task_id,
+        queue_depth: parsed.heartbeat.queue_depth,
+        timestamp: parsed.heartbeat.timestamp,
+      });
+      res.json({
+        ok: true,
+        provider: "openclaw",
+        event_id: parsed.eventId || null,
+        adapter: {
+          provider: "openclaw",
+          version: "1.0.0",
+          mode: "http-gateway",
+        },
+        heartbeat: parsed.heartbeat,
+      });
+    })().catch((error) => {
+      ledger.logAndSignAction("SYSTEM_ERROR", {
+        module: "uncertainty-gate",
+        stage: "openclaw-intake-heartbeat",
+        path: req.originalUrl,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "OpenClaw heartbeat intake failed." });
+    });
   });
 
   const initiativeIntakeAuth: RequestHandler = (req, res, next) => {

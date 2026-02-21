@@ -101,6 +101,11 @@ export interface AppConfig {
   initiativeIntakeHmacSecret: string;
   initiativeIntakeMaxSkewSeconds: number;
   initiativeIntakeEventTtlSeconds: number;
+  openclawIntakeEnabled: boolean;
+  openclawIntakeToken: string;
+  openclawIntakeHmacSecret: string;
+  openclawIntakeMaxSkewSeconds: number;
+  openclawIntakeEventTtlSeconds: number;
   interactionDbPath: string;
   channelConnectorConfigPath: string;
   channelConnectorSigningKey: string;
@@ -385,6 +390,11 @@ export function loadConfig(): AppConfig {
     initiativeIntakeHmacSecret: process.env.INITIATIVE_INTAKE_HMAC_SECRET?.trim() || "",
     initiativeIntakeMaxSkewSeconds: numberEnv("INITIATIVE_INTAKE_MAX_SKEW_SECONDS", 300),
     initiativeIntakeEventTtlSeconds: numberEnv("INITIATIVE_INTAKE_EVENT_TTL_SECONDS", 86400),
+    openclawIntakeEnabled: booleanEnv("OPENCLAW_INTAKE_ENABLED", false),
+    openclawIntakeToken: process.env.OPENCLAW_INTAKE_TOKEN?.trim() || "",
+    openclawIntakeHmacSecret: process.env.OPENCLAW_INTAKE_HMAC_SECRET?.trim() || "",
+    openclawIntakeMaxSkewSeconds: numberEnv("OPENCLAW_INTAKE_MAX_SKEW_SECONDS", 300),
+    openclawIntakeEventTtlSeconds: numberEnv("OPENCLAW_INTAKE_EVENT_TTL_SECONDS", 86400),
     interactionDbPath,
     channelConnectorConfigPath,
     channelConnectorSigningKey: process.env.CHANNEL_CONNECTOR_SIGNING_KEY?.trim() || "",

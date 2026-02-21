@@ -13,6 +13,8 @@ Reference architecture source:
   - Claw-EE maps this to `InitiativeEngine` + `InitiativeStore` with task retries, interrupt handling, and hash-chained initiative events.
 - External work-queue intake (Jira/Linear/PagerDuty style)
   - Claw-EE maps this to signed/tokenized initiative intake webhooks that normalize provider events into initiatives with replay protection.
+- OpenClaw runtime work-item events
+  - Claw-EE maps this to dedicated adapter intake endpoints (`/_clawee/intake/openclaw/work-item`, `/_clawee/intake/openclaw/heartbeat`) with token/HMAC auth, replay protection, and initiative normalization.
 - Built-in skills and direct host actions (`run shell`, file writes, browser automation)
   - Claw-EE maps this to policy engine block/approval gates, uncertainty scoring, and model registry checks before forwarding.
 - Workspace memory (`SOUL.md`, agent session logs under `.openclaw`)

@@ -734,6 +734,60 @@ paths:
           description: Schema validation failed
         "413":
           description: Payload size limit exceeded
+  /_clawee/intake/{provider}/webhook:
+    post:
+      summary: Ingest provider webhook and create/start initiative
+      security:
+        - intakeTokenHeader: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [jira, linear, pagerduty]
+        - name: x-intake-signature
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-intake-timestamp
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-intake-event-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiativeIntakeRequest"
+      responses:
+        "200":
+          description: Initiative deduped/existing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeIntakeResponse"
+        "201":
+          description: Initiative created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitiativeIntakeResponse"
+        "400":
+          description: Invalid provider payload
+        "401":
+          description: Intake auth/signature failed
+        "409":
+          description: Replay detected
+        "503":
+          description: Initiative engine disabled
   /_clawee/channel/{channel}/inbound:
     post:
       summary: Ingest inbound channel event (connector)
@@ -801,6 +855,10 @@ components:
       type: apiKey
       in: header
       name: x-channel-token
+    intakeTokenHeader:
+      type: apiKey
+      in: header
+      name: x-intake-token
   parameters:
     ApprovalId:
       name: id
@@ -1032,6 +1090,31 @@ components:
           type: boolean
         initiative:
           $ref: "#/components/schemas/InitiativeRecord"
+    InitiativeIntakeRequest:
+      type: object
+      description: Provider-native webhook payload (schema varies by provider).
+      additionalProperties: true
+    InitiativeIntakeResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        provider:
+          type: string
+          enum: [jira, linear, pagerduty]
+        event_id:
+          type: string
+          nullable: true
+        created:
+          type: boolean
+        started:
+          type: boolean
+        initiative:
+          $ref: "#/components/schemas/InitiativeRecord"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/InitiativeTaskRecord"
     ModalityIngestRequest:
       oneOf:
         - $ref: "#/components/schemas/ModalityIngestTextRequest"
@@ -1348,6 +1431,9 @@ components:
           additionalProperties: true
         initiatives:
           $ref: "#/components/schemas/InitiativeStats"
+        initiative_intake:
+          type: object
+          additionalProperties: true
         config_fingerprints:
           type: object
           additionalProperties:
@@ -1377,6 +1463,9 @@ components:
           additionalProperties: true
         initiatives:
           $ref: "#/components/schemas/InitiativeStats"
+        initiative_intake:
+          type: object
+          additionalProperties: true
         process:
           type: object
           additionalProperties: true

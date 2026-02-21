@@ -118,6 +118,11 @@ function channelSignature(secret, payload, timestamp) {
   return `sha256=${crypto.createHmac("sha256", secret).update(value).digest("hex")}`;
 }
 
+function intakeSignature(secret, payload, timestamp) {
+  const value = `${timestamp}.${payload}`;
+  return `sha256=${crypto.createHmac("sha256", secret).update(value).digest("hex")}`;
+}
+
 async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-ee-smoke-"));
   const controlToken = "control-secret";
@@ -127,6 +132,8 @@ async function main() {
   const approverTokenTwo = "approver-two-secret";
   const ingestToken = "ingest-secret";
   const hmacSecret = "channel-hmac-secret";
+  const initiativeIntakeToken = "initiative-intake-secret";
+  const initiativeIntakeHmacSecret = "initiative-intake-hmac-secret";
   const nowSec = Math.floor(Date.now() / 1000);
 
   const upstreamPort = await getFreePort();
@@ -409,6 +416,11 @@ async function main() {
         channelIngressHmacSecret: hmacSecret,
         channelIngressMaxSkewSeconds: 120,
         channelIngressEventTtlSeconds: 86400,
+        initiativeIntakeEnabled: true,
+        initiativeIntakeToken,
+        initiativeIntakeHmacSecret,
+        initiativeIntakeMaxSkewSeconds: 120,
+        initiativeIntakeEventTtlSeconds: 86400,
         modalityTextMaxPayloadBytes: 512,
         modalityVisionMaxPayloadBytes: 1024 * 1024,
         modalityAudioMaxPayloadBytes: 1024 * 1024,
@@ -965,6 +977,110 @@ async function main() {
     const initiativeEventsJson = await initiativeEventsReader.json();
     assert.equal(Array.isArray(initiativeEventsJson.events), true);
     assert.equal(initiativeEventsJson.events.length >= 1, true);
+    const jiraWebhookPayload = JSON.stringify({
+      webhookEvent: "jira:issue_created",
+      issue: {
+        key: "ENG-88",
+        fields: {
+          summary: "Fix failed migration in staging",
+          description: "Migration fails on step 3.",
+          priority: { name: "Highest" },
+          status: { name: "To Do" },
+          project: { key: "ENG" },
+        },
+      },
+      user: {
+        displayName: "Ops Bot",
+      },
+    });
+    const intakeUnauthorized = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: jiraWebhookPayload,
+      },
+    );
+    assert.equal(intakeUnauthorized.status, 401);
+    const intakeTimestamp = String(Math.floor(Date.now() / 1000));
+    const intakeGoodSignature = intakeSignature(
+      initiativeIntakeHmacSecret,
+      jiraWebhookPayload,
+      intakeTimestamp,
+    );
+    const intakeBadSignatureRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-intake-token": initiativeIntakeToken,
+          "x-intake-timestamp": intakeTimestamp,
+          "x-intake-signature": "sha256=bad",
+        },
+        body: jiraWebhookPayload,
+      },
+    );
+    assert.equal(intakeBadSignatureRes.status, 401);
+    const intakeCreatedRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-intake-token": initiativeIntakeToken,
+          "x-intake-event-id": "jira-event-1",
+          "x-intake-timestamp": intakeTimestamp,
+          "x-intake-signature": intakeGoodSignature,
+        },
+        body: jiraWebhookPayload,
+      },
+    );
+    assert.equal(intakeCreatedRes.status, 201);
+    const intakeCreatedJson = await intakeCreatedRes.json();
+    assert.equal(intakeCreatedJson.ok, true);
+    assert.equal(intakeCreatedJson.created, true);
+    assert.equal(intakeCreatedJson.provider, "jira");
+    const intakeReplayRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-intake-token": initiativeIntakeToken,
+          "x-intake-event-id": "jira-event-1",
+          "x-intake-timestamp": intakeTimestamp,
+          "x-intake-signature": intakeGoodSignature,
+        },
+        body: jiraWebhookPayload,
+      },
+    );
+    assert.equal(intakeReplayRes.status, 409);
+    const intakeDedupeTimestamp = String(Math.floor(Date.now() / 1000) + 1);
+    const intakeDedupeSignature = intakeSignature(
+      initiativeIntakeHmacSecret,
+      jiraWebhookPayload,
+      intakeDedupeTimestamp,
+    );
+    const intakeDedupeRes = await fetch(
+      `http://127.0.0.1:${gatePort}/_clawee/intake/jira/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-intake-token": initiativeIntakeToken,
+          "x-intake-event-id": "jira-event-2",
+          "x-intake-timestamp": intakeDedupeTimestamp,
+          "x-intake-signature": intakeDedupeSignature,
+        },
+        body: jiraWebhookPayload,
+      },
+    );
+    assert.equal(intakeDedupeRes.status, 200);
+    const intakeDedupeJson = await intakeDedupeRes.json();
+    assert.equal(intakeDedupeJson.created, false);
 
     await waitFor(() => delivered.length > 0, 7000);
     assert.equal(delivered[0].path, "/channel/slack");

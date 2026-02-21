@@ -127,6 +127,7 @@ Core groups:
 - Channel operations: inbound/outbound visibility, send, delivery, retry, connector reload
 - Modality ingest: validated `text|vision|audio|action` payload intake
 - Initiative engine: create/list/start/pause/cancel/interrupt initiatives and inspect task/event history
+- Initiative intake adapters: Jira/Linear/PagerDuty webhook ingestion with token + HMAC + replay protection
 
 Full endpoint details: `openapi/claw-ee.openapi.yaml`
 
@@ -181,6 +182,11 @@ Use `.env.example` as the full source of truth. High-impact groups:
 - `INITIATIVE_POLL_SECONDS`
 - `INITIATIVE_MAX_TASK_RETRIES`
 - `INITIATIVE_DB_PATH`
+- `INITIATIVE_INTAKE_ENABLED`
+- `INITIATIVE_INTAKE_TOKEN`
+- `INITIATIVE_INTAKE_HMAC_SECRET`
+- `INITIATIVE_INTAKE_MAX_SKEW_SECONDS`
+- `INITIATIVE_INTAKE_EVENT_TTL_SECONDS`
 
 ### Budget and guardrails
 

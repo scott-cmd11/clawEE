@@ -11,6 +11,7 @@
 - Added keyring coverage tests for audit attestation and security conformance signatures.
 - Added repo-check workflow assertions to enforce strict replay smoke in CI/release workflows.
 - Added key-rotation runbook for signed catalogs and attestation/conformance signing surfaces.
+- Added security-hardened initiative intake adapters for Jira/Linear/PagerDuty webhook ingestion with token/HMAC auth and replay protection.
 - Added startup audit hash-chain verification with configurable fail mode (`AUDIT_STARTUP_VERIFY_MODE`).
 - Added `GET /_clawee/control/audit/verify` for runtime audit-integrity checks.
 - Added `verify-audit-chain` command in `scripts/security-tools.mjs` for offline/CI validation.

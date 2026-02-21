@@ -99,6 +99,8 @@ if (!fs.existsSync(gatePath)) {
     "app.get(\"/_clawee/control/security/invariants\"",
     "app.post(\"/_clawee/control/security/conformance/export\"",
     "app.post(\"/_clawee/control/security/conformance/verify\"",
+    "app.post(\"/_clawee/intake/:provider/webhook\"",
+    "verifyIntakeHmac(",
     "__claweeSecurityDecisionId",
     "invariantCheck({",
   ];

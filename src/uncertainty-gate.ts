@@ -30,6 +30,7 @@ import type {
 import { type ControlPermission, type ControlIdentity, ControlAuthz } from "./control-authz";
 import type { RiskEvaluator, ToolIntent } from "./inference-provider";
 import { InteractionStore } from "./interaction-store";
+import { parseInitiativeIntake, parseInitiativeProvider } from "./initiative-intake";
 import type { InitiativeControlService } from "./initiative-engine";
 import { validateModalityPayload, type ModalityPayloadValidationOptions } from "./modality-validation";
 import { ModelRegistry, type ModelModality } from "./model-registry";
@@ -60,6 +61,11 @@ export interface UncertaintyGateOptions {
   channelIngressHmacSecret: string;
   channelIngressMaxSkewSeconds: number;
   channelIngressEventTtlSeconds: number;
+  initiativeIntakeEnabled?: boolean;
+  initiativeIntakeToken?: string;
+  initiativeIntakeHmacSecret?: string;
+  initiativeIntakeMaxSkewSeconds?: number;
+  initiativeIntakeEventTtlSeconds?: number;
   modalityTextMaxPayloadBytes: number;
   modalityVisionMaxPayloadBytes: number;
   modalityAudioMaxPayloadBytes: number;
@@ -367,6 +373,12 @@ function channelAuthorized(req: Request, token: string): boolean {
   return authHeader === token || tokenHeader === token;
 }
 
+function intakeAuthorized(req: Request, token: string): boolean {
+  const authHeader = parseBearerToken(req.header("authorization"));
+  const tokenHeader = req.header("x-intake-token")?.trim() || "";
+  return authHeader === token || tokenHeader === token;
+}
+
 interface ChannelHmacResult {
   ok: boolean;
   reason: string;
@@ -421,6 +433,60 @@ function verifyChannelHmac(req: Request, secret: string, maxSkewSeconds: number)
   };
 }
 
+interface IntakeHmacResult {
+  ok: boolean;
+  reason: string;
+  nonceMaterial?: string;
+}
+
+function verifyIntakeHmac(req: Request, secret: string, maxSkewSeconds: number): IntakeHmacResult {
+  const normalizedSecret = secret.trim();
+  if (!normalizedSecret) {
+    return { ok: true, reason: "hmac-disabled" };
+  }
+  const signatureRaw = (req.header("x-intake-signature") || "").trim();
+  if (!signatureRaw) {
+    return { ok: false, reason: "missing-signature" };
+  }
+
+  const providedHex = signatureRaw.replace(/^sha256=/i, "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(providedHex)) {
+    return { ok: false, reason: "invalid-signature-format" };
+  }
+
+  const rawBody = (req as Request & { rawBody?: string }).rawBody || "";
+  const timestamp = (req.header("x-intake-timestamp") || "").trim();
+  if (!timestamp.length) {
+    return { ok: false, reason: "missing-timestamp" };
+  }
+  const payload = `${timestamp}.${rawBody}`;
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) {
+    return { ok: false, reason: "invalid-timestamp" };
+  }
+  const timestampMs = ts > 1e12 ? ts : ts * 1000;
+  const skewMs = Math.abs(Date.now() - timestampMs);
+  if (skewMs > Math.max(1, maxSkewSeconds) * 1000) {
+    return { ok: false, reason: "timestamp-skew-exceeded" };
+  }
+
+  const expectedHex = crypto.createHmac("sha256", normalizedSecret).update(payload).digest("hex");
+  const provided = Buffer.from(providedHex, "hex");
+  const expected = Buffer.from(expectedHex, "hex");
+  if (provided.length !== expected.length) {
+    return { ok: false, reason: "signature-length-mismatch" };
+  }
+  if (!crypto.timingSafeEqual(provided, expected)) {
+    return { ok: false, reason: "signature-mismatch" };
+  }
+  return {
+    ok: true,
+    reason: "ok",
+    nonceMaterial: `${req.path}|${timestamp}|${providedHex}`,
+  };
+}
+
 function parseChannelKind(raw: string): ChannelKind | null {
   const value = raw.trim().toLowerCase();
   if (value === "slack" || value === "teams" || value === "discord" || value === "email" || value === "webhook") {
@@ -442,6 +508,21 @@ function extractIngressEventKey(req: Request): string {
     if (bodyEventId) {
       return `${channel}|${bodyEventId}`;
     }
+  }
+  return "";
+}
+
+function extractInitiativeIntakeEventKey(req: Request, providerEventId: string): string {
+  const headerEventId = (req.header("x-intake-event-id") || req.header("x-event-id") || "")
+    .trim()
+    .toLowerCase();
+  const provider = String(req.params.provider || "").trim().toLowerCase();
+  if (headerEventId) {
+    return `${provider}|${headerEventId}`;
+  }
+  const normalizedProviderEventId = providerEventId.trim().toLowerCase();
+  if (normalizedProviderEventId) {
+    return `${provider}|${normalizedProviderEventId}`;
   }
   return "";
 }
@@ -604,6 +685,19 @@ export async function startUncertaintyGate(
     },
     textMaxChars: Math.max(32, Math.floor(options.modalityTextMaxChars)),
   };
+  const initiativeIntakeEnabled =
+    options.initiativeIntakeEnabled === true &&
+    Boolean(options.initiativeIntakeToken && options.initiativeIntakeToken.trim());
+  const initiativeIntakeToken = String(options.initiativeIntakeToken || "").trim();
+  const initiativeIntakeHmacSecret = String(options.initiativeIntakeHmacSecret || "").trim();
+  const initiativeIntakeMaxSkewSeconds = Math.max(
+    1,
+    Math.floor(Number(options.initiativeIntakeMaxSkewSeconds || 300)),
+  );
+  const initiativeIntakeEventTtlSeconds = Math.max(
+    60,
+    Math.floor(Number(options.initiativeIntakeEventTtlSeconds || 86400)),
+  );
 
   const controlAuth =
     (permission: ControlPermission): RequestHandler =>
@@ -706,6 +800,13 @@ export async function startUncertaintyGate(
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
       initiatives: initiativeStats,
+      initiative_intake: {
+        enabled: initiativeIntakeEnabled,
+        token_configured: Boolean(initiativeIntakeToken),
+        hmac_enabled: Boolean(initiativeIntakeHmacSecret),
+        max_skew_seconds: initiativeIntakeMaxSkewSeconds,
+        event_ttl_seconds: initiativeIntakeEventTtlSeconds,
+      },
     });
   });
 
@@ -1279,6 +1380,13 @@ export async function startUncertaintyGate(
       capability_policy: capabilityPolicyState,
       replay_store: replayStoreState,
       initiatives: initiativeStats,
+      initiative_intake: {
+        enabled: initiativeIntakeEnabled,
+        token_configured: Boolean(initiativeIntakeToken),
+        hmac_enabled: Boolean(initiativeIntakeHmacSecret),
+        max_skew_seconds: initiativeIntakeMaxSkewSeconds,
+        event_ttl_seconds: initiativeIntakeEventTtlSeconds,
+      },
       process: {
         pid: process.pid,
         memory_rss: process.memoryUsage().rss,
@@ -1852,6 +1960,201 @@ export async function startUncertaintyGate(
       { observation_id: observation.id, session_id: observation.session_id },
     );
     res.json({ ok: true, observation });
+  });
+
+  const initiativeIntakeAuth: RequestHandler = (req, res, next) => {
+    void (async () => {
+      if (!initiativeIntakeEnabled) {
+        res.status(404).json({ error: "Initiative intake is not enabled." });
+        return;
+      }
+      const provider = parseInitiativeProvider(String(req.params.provider || ""));
+      if (!provider) {
+        res.status(400).json({ error: "Unsupported intake provider." });
+        return;
+      }
+      const rateKey = `initiative-intake:${req.ip || "unknown"}:${provider}`;
+      const rateDecision = channelLimiter.check(rateKey);
+      if (!rateDecision.allowed) {
+        ledger.logAndSignAction("RATE_LIMIT_BLOCKED", {
+          path: req.originalUrl,
+          method: req.method,
+          scope: "initiative-intake",
+          provider,
+          retry_after_seconds: rateDecision.retryAfterSeconds,
+        });
+        res.setHeader("retry-after", String(rateDecision.retryAfterSeconds));
+        res.status(429).json({ error: "Initiative intake rate limit exceeded." });
+        return;
+      }
+      if (!intakeAuthorized(req, initiativeIntakeToken)) {
+        invariantCheck({
+          id: "INV-008-INGRESS-AUTH-GATE",
+          passed: true,
+          reason: "initiative intake unauthorized",
+          context: {
+            path: req.originalUrl,
+            method: req.method,
+            provider,
+            stage: "auth",
+          },
+        });
+        ledger.logAndSignAction("CONTROL_ACCESS_DENIED", {
+          path: req.originalUrl,
+          method: req.method,
+          provider,
+          initiative_intake: true,
+        });
+        res.status(401).json({ error: "Unauthorized initiative intake request." });
+        return;
+      }
+      const signatureCheck = verifyIntakeHmac(req, initiativeIntakeHmacSecret, initiativeIntakeMaxSkewSeconds);
+      if (!signatureCheck.ok) {
+        invariantCheck({
+          id: "INV-008-INGRESS-AUTH-GATE",
+          passed: true,
+          reason: signatureCheck.reason,
+          context: {
+            path: req.originalUrl,
+            method: req.method,
+            provider,
+            stage: "signature",
+          },
+        });
+        ledger.logAndSignAction("INITIATIVE_INTAKE_SIGNATURE_DENIED", {
+          path: req.originalUrl,
+          method: req.method,
+          provider,
+          reason: signatureCheck.reason,
+        });
+        res.status(401).json({ error: "Invalid initiative intake signature." });
+        return;
+      }
+      if (signatureCheck.nonceMaterial) {
+        const nonceHash = sha256Hex(signatureCheck.nonceMaterial);
+        const accepted = await replayStore.registerNonce(nonceHash, initiativeIntakeMaxSkewSeconds);
+        if (!accepted) {
+          invariantCheck({
+            id: "INV-008-INGRESS-AUTH-GATE",
+            passed: true,
+            reason: "initiative intake nonce replay blocked",
+            context: {
+              path: req.originalUrl,
+              method: req.method,
+              provider,
+              stage: "nonce-replay",
+            },
+          });
+          ledger.logAndSignAction("INITIATIVE_INTAKE_REPLAY_BLOCKED", {
+            path: req.originalUrl,
+            method: req.method,
+            provider,
+            stage: "nonce",
+          });
+          res.status(409).json({ error: "Replay detected for initiative intake request." });
+          return;
+        }
+      }
+      next();
+    })().catch((error) => {
+      ledger.logAndSignAction("SYSTEM_ERROR", {
+        module: "uncertainty-gate",
+        stage: "initiative-intake-auth",
+        path: req.originalUrl,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Initiative intake auth failed." });
+    });
+  };
+
+  app.post("/_clawee/intake/:provider/webhook", initiativeIntakeAuth, (req, res) => {
+    void (async () => {
+      const provider = parseInitiativeProvider(String(req.params.provider || ""));
+      if (!provider) {
+        res.status(400).json({ error: "Unsupported intake provider." });
+        return;
+      }
+      const svc = getInitiativeService(res);
+      if (!svc) {
+        return;
+      }
+      const parsed = parseInitiativeIntake(provider, req.body);
+      if (!parsed.ok || !parsed.intake) {
+        ledger.logAndSignAction("INITIATIVE_INTAKE_SKIPPED", {
+          provider,
+          reason: parsed.reason || "invalid payload",
+          path: req.originalUrl,
+        });
+        res.status(400).json({
+          error: "Invalid initiative intake payload.",
+          reason: parsed.reason || "unknown",
+        });
+        return;
+      }
+      const eventKey = extractInitiativeIntakeEventKey(req, parsed.eventId);
+      if (eventKey) {
+        const eventKeyHash = sha256Hex(eventKey);
+        const accepted = await replayStore.registerEventKey(eventKeyHash, initiativeIntakeEventTtlSeconds);
+        if (!accepted) {
+          ledger.logAndSignAction("INITIATIVE_INTAKE_REPLAY_BLOCKED", {
+            path: req.originalUrl,
+            method: req.method,
+            provider,
+            stage: "event-id",
+            event_key: eventKey,
+          });
+          res.status(409).json({ error: "Replay detected for initiative intake event id." });
+          return;
+        }
+      }
+      ledger.logAndSignAction("INITIATIVE_INTAKE_RECEIVED", {
+        provider,
+        event_id: parsed.eventId || null,
+        source: parsed.intake.source,
+        external_ref: parsed.intake.external_ref || null,
+      });
+      const created = svc.createInitiative(parsed.intake);
+      let started = false;
+      if (created.created) {
+        try {
+          svc.startInitiative(created.initiative.id, `intake:${provider}`);
+          started = true;
+        } catch (error) {
+          ledger.logAndSignAction("SYSTEM_ERROR", {
+            module: "uncertainty-gate",
+            stage: "initiative-intake-start",
+            provider,
+            initiative_id: created.initiative.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      ledger.logAndSignAction("INITIATIVE_INTAKE_CREATED", {
+        provider,
+        created: created.created,
+        started,
+        initiative_id: created.initiative.id,
+        external_ref: created.initiative.external_ref,
+        event_id: parsed.eventId || null,
+      });
+      res.status(created.created ? 201 : 200).json({
+        ok: true,
+        provider,
+        event_id: parsed.eventId || null,
+        created: created.created,
+        started,
+        initiative: created.initiative,
+        tasks: created.tasks,
+      });
+    })().catch((error) => {
+      ledger.logAndSignAction("SYSTEM_ERROR", {
+        module: "uncertainty-gate",
+        stage: "initiative-intake",
+        path: req.originalUrl,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Initiative intake failed." });
+    });
   });
 
   const channelIngestAuth: RequestHandler = (req, res, next) => {

@@ -96,6 +96,11 @@ export interface AppConfig {
   initiativePollSeconds: number;
   initiativeMaxTaskRetries: number;
   initiativeDbPath: string;
+  initiativeIntakeEnabled: boolean;
+  initiativeIntakeToken: string;
+  initiativeIntakeHmacSecret: string;
+  initiativeIntakeMaxSkewSeconds: number;
+  initiativeIntakeEventTtlSeconds: number;
   interactionDbPath: string;
   channelConnectorConfigPath: string;
   channelConnectorSigningKey: string;
@@ -375,6 +380,11 @@ export function loadConfig(): AppConfig {
     initiativePollSeconds: numberEnv("INITIATIVE_POLL_SECONDS", 15),
     initiativeMaxTaskRetries: numberEnv("INITIATIVE_MAX_TASK_RETRIES", 3),
     initiativeDbPath,
+    initiativeIntakeEnabled: booleanEnv("INITIATIVE_INTAKE_ENABLED", false),
+    initiativeIntakeToken: process.env.INITIATIVE_INTAKE_TOKEN?.trim() || "",
+    initiativeIntakeHmacSecret: process.env.INITIATIVE_INTAKE_HMAC_SECRET?.trim() || "",
+    initiativeIntakeMaxSkewSeconds: numberEnv("INITIATIVE_INTAKE_MAX_SKEW_SECONDS", 300),
+    initiativeIntakeEventTtlSeconds: numberEnv("INITIATIVE_INTAKE_EVENT_TTL_SECONDS", 86400),
     interactionDbPath,
     channelConnectorConfigPath,
     channelConnectorSigningKey: process.env.CHANNEL_CONNECTOR_SIGNING_KEY?.trim() || "",
